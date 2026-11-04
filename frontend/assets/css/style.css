@@ -1,0 +1,93 @@
+/* Jengo Hardware brand tokens and opt-in utilities.
+   Namespaced classes keep these styles alongside Tailwind without replacing it. */
+:root {
+    --jengo-safety-orange: #ff6600;
+    --jengo-dark-charcoal: #333333;
+    --jengo-orange-hover: #d95700;
+    --jengo-transition-fast: 150ms ease;
+    --jengo-transition-normal: 250ms ease;
+    --jengo-scrollbar-track: #f3f4f6;
+    --jengo-scrollbar-thumb: #9ca3af;
+}
+
+.jengo-hover-transition {
+    transition:
+        color var(--jengo-transition-fast),
+        background-color var(--jengo-transition-fast),
+        border-color var(--jengo-transition-fast),
+        box-shadow var(--jengo-transition-fast),
+        transform var(--jengo-transition-fast);
+}
+
+.jengo-hover-lift {
+    transition: transform var(--jengo-transition-normal), box-shadow var(--jengo-transition-normal);
+}
+
+.jengo-hover-lift:hover {
+    transform: translateY(-3px);
+}
+
+.jengo-hover-scale {
+    transition: transform var(--jengo-transition-normal);
+}
+
+.jengo-hover-scale:hover {
+    transform: scale(1.03);
+}
+
+.jengo-custom-scrollbar {
+    scrollbar-color: var(--jengo-scrollbar-thumb) var(--jengo-scrollbar-track);
+    scrollbar-width: thin;
+}
+
+.jengo-custom-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.jengo-custom-scrollbar::-webkit-scrollbar-track {
+    background: var(--jengo-scrollbar-track);
+}
+
+.jengo-custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--jengo-scrollbar-thumb);
+    border: 2px solid var(--jengo-scrollbar-track);
+    border-radius: 9999px;
+}
+
+.jengo-custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--jengo-safety-orange);
+}
+
+.jengo-toast-slide-in {
+    animation: jengo-toast-slide-in 250ms ease-out both;
+}
+
+@keyframes jengo-toast-slide-in {
+    from {
+        opacity: 0;
+        transform: translate3d(1rem, 0, 0);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .jengo-hover-transition,
+    .jengo-hover-lift,
+    .jengo-hover-scale {
+        transition: none;
+    }
+
+    .jengo-hover-lift:hover,
+    .jengo-hover-scale:hover {
+        transform: none;
+    }
+
+    .jengo-toast-slide-in {
+        animation: none;
+    }
+}
