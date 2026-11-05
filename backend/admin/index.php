@@ -5,14 +5,14 @@
  * Admin dashboard — summary KPIs, recent orders, low stock alerts,
  * user stats, and a 7-day revenue sparkline.
  *
- * Protected by require_admin() — admin role only.
+ * Protected by the independent admin portal authentication.
  */
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../../admin/auth.php';
 
-require_admin();
+require_admin_login();
 
 $pdo = db();
 
@@ -220,7 +220,7 @@ require_once __DIR__ . '/../includes/header.php';
                 </svg>
                 View Shop
             </a>
-            <a href="<?= $base ?>/logout.php" class="admin-sidebar__link">
+            <a href="<?= $base ?>/admin/logout.php" class="admin-sidebar__link">
                 <svg class="w-4 h-4 flex-shrink-0" xmlns="http://www.w3.org/2000/svg"
                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
                      stroke-width="1.8" aria-hidden="true">

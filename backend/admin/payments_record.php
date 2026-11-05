@@ -18,9 +18,9 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../../admin/auth.php';
 
-require_admin();
+require_admin_login();
 
 $pdo = db();
 
@@ -292,7 +292,7 @@ $csvUrl = $base . '/admin/payments_record.php?' . http_build_query($csvParams);
         <?php endforeach; ?>
         <div class="border-t border-gray-700/50 my-3 mx-3"></div>
         <a href="<?= $base ?>/shop.php"   class="admin-sidebar__link">🛒 View Shop</a>
-        <a href="<?= $base ?>/logout.php" class="admin-sidebar__link">🚪 Sign Out</a>
+        <a href="<?= $base ?>/admin/logout.php" class="admin-sidebar__link">🚪 Sign Out</a>
     </aside>
 
     <!-- Main content -->
@@ -339,7 +339,7 @@ $csvUrl = $base . '/admin/payments_record.php?' . http_build_query($csvParams);
                     'icon'  => 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
                 ],
                 [
-                    'label' => 'Today's Revenue',
+                    'label' => "Today's Revenue",
                     'value' => 'KES ' . number_format((float)($kpi['today_total'] ?? 0), 0),
                     'sub'   => date('d M Y'),
                     'color' => 'border-l-orange',

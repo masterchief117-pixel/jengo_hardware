@@ -15,9 +15,9 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../../admin/auth.php';
 
-require_admin();
+require_admin_login();
 
 $pdo    = db();
 $selfId = get_user_id();   // Logged-in admin's own ID (protected from demotion)
@@ -347,7 +347,7 @@ function admin_sidebar(string $base): void
     }
     echo '<div class="border-t border-gray-700/50 my-3 mx-3"></div>';
     echo "<a href=\"{$base}/shop.php\" class=\"admin-sidebar__link\">🛒 View Shop</a>";
-    echo "<a href=\"{$base}/logout.php\" class=\"admin-sidebar__link\">🚪 Sign Out</a>";
+    echo "<a href=\"{$base}/admin/logout.php\" class=\"admin-sidebar__link\">🚪 Sign Out</a>";
     echo '</aside>';
 }
 ?>
@@ -407,7 +407,7 @@ function admin_sidebar(string $base): void
                         Full Name <span class="required">*</span>
                     </label>
                     <input type="text" id="full_name" name="full_name"
-                           class="form-input <?= isset($errors['full_name'] ?? null) ? 'is-error' : '' ?>"
+                           class="form-input <?= isset($errors['full_name']) ? 'is-error' : '' ?>"
                            value="<?= htmlspecialchars($editUser['full_name'] ?? ($_POST['full_name'] ?? '')) ?>"
                            maxlength="120" required autocomplete="name" />
                     <?php if (isset($errors['full_name'])): ?>
@@ -424,7 +424,7 @@ function admin_sidebar(string $base): void
                             Email <span class="required">*</span>
                         </label>
                         <input type="email" id="email" name="email"
-                               class="form-input <?= isset($errors['email'] ?? null) ? 'is-error' : '' ?>"
+                               class="form-input <?= isset($errors['email']) ? 'is-error' : '' ?>"
                                value="<?= htmlspecialchars($editUser['email'] ?? ($_POST['email'] ?? '')) ?>"
                                maxlength="180" required autocomplete="email" />
                         <?php if (isset($errors['email'])): ?>
@@ -438,7 +438,7 @@ function admin_sidebar(string $base): void
                             Phone <?= !$isEdit ? '<span class="required">*</span>' : '' ?>
                         </label>
                         <input type="tel" id="phone" name="phone"
-                               class="form-input <?= isset($errors['phone'] ?? null) ? 'is-error' : '' ?>"
+                               class="form-input <?= isset($errors['phone']) ? 'is-error' : '' ?>"
                                value="<?= htmlspecialchars($editUser['phone'] ?? ($_POST['phone'] ?? '')) ?>"
                                placeholder="07XX XXX XXX"
                                maxlength="15"
@@ -506,7 +506,7 @@ function admin_sidebar(string $base): void
                     </label>
                     <div class="relative">
                         <input type="password" id="password" name="password"
-                               class="form-input pr-11 <?= isset($errors['password'] ?? null) ? 'is-error' : '' ?>"
+                               class="form-input pr-11 <?= isset($errors['password']) ? 'is-error' : '' ?>"
                                placeholder="<?= $isEdit ? 'Enter new password to change…' : 'Min. 8 chars, 1 uppercase, 1 number' ?>"
                                maxlength="72"
                                autocomplete="new-password"

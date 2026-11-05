@@ -12,9 +12,9 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../../admin/auth.php';
 
-require_admin();
+require_admin_login();
 
 $pdo = db();
 
@@ -690,7 +690,7 @@ require_once __DIR__ . '/../includes/header.php';
         <?php endforeach; ?>
         <div class="border-t border-gray-700/50 my-3 mx-3"></div>
         <a href="<?= $base ?>/shop.php"   class="admin-sidebar__link">🛒 View Shop</a>
-        <a href="<?= $base ?>/logout.php" class="admin-sidebar__link">🚪 Sign Out</a>
+        <a href="<?= $base ?>/admin/logout.php" class="admin-sidebar__link">🚪 Sign Out</a>
     </aside>
 
     <!-- Main -->

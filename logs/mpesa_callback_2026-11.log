@@ -1,0 +1,2 @@
+[2026-11-05 11:19:47] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"135b-4679-8ea6-1c3dca88c6a41185738","CheckoutRequestID":"ws_CO_051120261319415745942293","ResultCode":1032,"ResultDesc":"Request Cancelled by user."}}}}
+[2026-11-05 11:19:47] [INFO] Payment CANCELLED {"payment_id":4,"order_id":10,"result_code":1032,"result_desc":"Request Cancelled by user."}
