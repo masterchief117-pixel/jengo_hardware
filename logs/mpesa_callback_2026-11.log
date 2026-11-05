@@ -1,2 +1,10 @@
 [2026-11-05 11:19:47] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"135b-4679-8ea6-1c3dca88c6a41185738","CheckoutRequestID":"ws_CO_051120261319415745942293","ResultCode":1032,"ResultDesc":"Request Cancelled by user."}}}}
 [2026-11-05 11:19:47] [INFO] Payment CANCELLED {"payment_id":4,"order_id":10,"result_code":1032,"result_desc":"Request Cancelled by user."}
+[2026-11-05 19:22:27] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"d70d-40dc-a8f8-b6ab4cfc3b0e356804","CheckoutRequestID":"ws_CO_051120262122027117721068","ResultCode":1037,"ResultDesc":"No response from user."}}}}
+[2026-11-05 19:22:27] [INFO] Payment FAILED {"payment_id":5,"order_id":12,"result_code":1037,"result_desc":"No response from user."}
+[2026-11-05 19:35:36] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"135b-4679-8ea6-1c3dca88c6a41224219","CheckoutRequestID":"ws_CO_051120262135227117721068","ResultCode":1032,"ResultDesc":"Request Cancelled by user."}}}}
+[2026-11-05 19:35:36] [INFO] Payment CANCELLED {"payment_id":6,"order_id":13,"result_code":1032,"result_desc":"Request Cancelled by user."}
+[2026-11-05 20:11:20] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"d70d-40dc-a8f8-b6ab4cfc3b0e363458","CheckoutRequestID":"ws_CO_051120262211116791986154","ResultCode":1,"ResultDesc":"The balance is insufficient for the transaction."}}}}
+[2026-11-05 20:11:20] [INFO] Payment FAILED {"payment_id":7,"order_id":15,"result_code":1,"result_desc":"The balance is insufficient for the transaction."}
+[2026-11-05 20:27:28] [INFO] Callback received {"payload":{"Body":{"stkCallback":{"MerchantRequestID":"135b-4679-8ea6-1c3dca88c6a41227292","CheckoutRequestID":"ws_CO_051120262227227745942293","ResultCode":1032,"ResultDesc":"Request Cancelled by user."}}}}
+[2026-11-05 20:27:28] [INFO] Payment CANCELLED {"payment_id":8,"order_id":16,"result_code":1032,"result_desc":"Request Cancelled by user."}

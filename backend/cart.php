@@ -339,10 +339,12 @@ require_once __DIR__ . '/includes/header.php';
                                 <input type="hidden" name="action"     value="remove">
                                 <input type="hidden" name="product_id" value="<?= $item['id'] ?>">
                                 <button type="submit"
-                                        class="text-gray-300 hover:text-red-500
+                                        class="inline-flex items-center gap-1 text-sm font-medium
+                                               text-red-600 hover:text-red-800
                                                transition-colors p-1 rounded"
-                                        aria-label="Remove <?= htmlspecialchars($item['name'], ENT_QUOTES) ?> from cart"
+                                        aria-label="Drop <?= htmlspecialchars($item['name'], ENT_QUOTES) ?> from cart"
                                         data-confirm="Remove this item from your cart?">
+                                    <span>Drop</span>
                                     <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg"
                                          fill="none" viewBox="0 0 24 24"
                                          stroke="currentColor" stroke-width="1.8"
@@ -405,9 +407,11 @@ require_once __DIR__ . '/includes/header.php';
                         <input type="hidden" name="action"     value="remove">
                         <input type="hidden" name="product_id" value="<?= $item['id'] ?>">
                         <button type="submit"
-                                class="text-gray-300 hover:text-red-500 transition-colors"
-                                aria-label="Remove <?= htmlspecialchars($item['name'], ENT_QUOTES) ?>"
+                                class="inline-flex items-center gap-1 text-sm font-medium
+                                       text-red-600 hover:text-red-800 transition-colors"
+                                aria-label="Drop <?= htmlspecialchars($item['name'], ENT_QUOTES) ?> from cart"
                                 data-confirm="Remove this item?">
+                            <span>Drop</span>
                             <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg"
                                  fill="none" viewBox="0 0 24 24" stroke="currentColor"
                                  stroke-width="1.8" aria-hidden="true">
@@ -596,6 +600,26 @@ require_once __DIR__ . '/includes/header.php';
     </div><!-- /right column -->
 
 </div><!-- /flex layout -->
+<section class="mt-6 rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 shadow-sm"
+         aria-label="Cart total summary">
+    <h2 class="text-lg font-bold text-gray-900 mb-4">Order total</h2>
+    <dl class="space-y-2 text-sm">
+        <div class="flex items-center justify-between text-gray-600">
+            <dt>Items (<?= $cartCount ?>)</dt>
+            <dd class="font-medium text-gray-900">KES <?= number_format($cartTotal, 2) ?></dd>
+        </div>
+        <div class="flex items-center justify-between text-gray-600">
+            <dt>Delivery</dt>
+            <dd class="font-medium text-gray-900">
+                <?= $shippingFee === 0.0 ? 'FREE' : 'KES ' . number_format($shippingFee, 2) ?>
+            </dd>
+        </div>
+        <div class="flex items-center justify-between border-t border-gray-200 pt-3 text-base font-bold">
+            <dt>Total</dt>
+            <dd class="text-orange">KES <?= number_format($orderTotal, 2) ?></dd>
+        </div>
+    </dl>
+</section>
 <?php endif; // cart not empty ?>
 
 

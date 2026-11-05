@@ -31,16 +31,35 @@ $pending = $_SESSION['pending_order'] ?? null;
 
 if (
     !$pending ||
-    !isset($pending['order_id'], $pending['total_amount'], $pending['phone']) ||
+    !isset($pending['order_id'], $pending['total_amount'], $pending['order_number']) ||
     ($pending['payment_method'] ?? '') !== 'mpesa'
 ) {
     redirect('/cart.php', 'No active M-Pesa order found. Please try again.', 'error');
 }
 
+if (
+    $_SERVER['REQUEST_METHOD'] !== 'POST' ||
+    !is_string($_SESSION['mpesa_push_token'] ?? null) ||
+    !is_string($_POST['csrf_token'] ?? null) ||
+    !hash_equals($_SESSION['mpesa_push_token'], $_POST['csrf_token'])
+) {
+    unset($_SESSION['mpesa_push_token']);
+    redirect('/checkout.php', 'Your M-Pesa checkout expired. Please try again.', 'error');
+}
+
+$submittedPhone = $_POST['phone'] ?? null;
+$phone = is_string($submittedPhone) ? format_phone_daraja($submittedPhone) : null;
+if ($phone === null) {
+    unset($_SESSION['mpesa_push_token']);
+    redirect('/checkout.php', 'Enter a valid Kenyan M-Pesa number and try again.', 'error');
+}
+unset($_SESSION['mpesa_push_token']);
+
 $orderId     = (int)   $pending['order_id'];
 $totalAmount = (float) $pending['total_amount'];
-$phone       = (string)$pending['phone'];           // 254XXXXXXXXX normalised
 $orderNumber = (string)$pending['order_number'];
+$pending['phone'] = $phone;
+$_SESSION['pending_order'] = $pending;
 
 // Verify the order still exists and is in 'pending' state
 $orderStmt = $pdo->prepare(
@@ -172,19 +191,21 @@ function daraja_stk_password(string $shortcode, string $passkey, string $timesta
 /**
  * Format the phone number for Daraja.
  * Daraja expects 254XXXXXXXXX (no +, no leading 0).
- * Our session already stores it normalised, but we sanitise anyway.
+ * Accept Kenyan local or international formats and return normalized digits.
  */
-function format_phone_daraja(string $phone): string
+function format_phone_daraja(string $phone): ?string
 {
-    $phone = preg_replace('/[^0-9]/', '', $phone);
+    $phone = preg_replace('/[\s().-]/', '', trim($phone));
 
-    if (str_starts_with($phone, '0') && strlen($phone) === 10) {
-        return '254' . substr($phone, 1);
-    }
     if (str_starts_with($phone, '+254')) {
-        return substr($phone, 1); // strip leading +
+        $phone = substr($phone, 1);
+    } elseif (str_starts_with($phone, '0') && strlen($phone) === 10) {
+        $phone = '254' . substr($phone, 1);
     }
-    return $phone;
+
+    return preg_match('/^254(7[0-9]{8}|1[0-1][0-9]{7})$/', $phone)
+        ? $phone
+        : null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -203,7 +224,7 @@ try {
     $timestamp = date('YmdHis');
     $password  = daraja_stk_password($shortcode, $passkey, $timestamp);
     $amount    = (int) ceil($totalAmount);  // Daraja requires integer KES
-    $formattedPhone = format_phone_daraja($phone);
+    $formattedPhone = $phone;
 
     $payload = [
         'BusinessShortCode' => $shortcode,

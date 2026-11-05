@@ -80,13 +80,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             "UPDATE orders SET status = ? WHERE id = ?"
         )->execute([$newStatus, $orderId]);
 
-        // If completing → stamp the attendant_id
-        if ($newStatus === 'completed') {
-            $pdo->prepare(
-                "UPDATE orders SET attendant_id = ? WHERE id = ? AND attendant_id IS NULL"
-            )->execute([get_user_id(), $orderId]);
-        }
-
         $label = ORDER_STATUSES[$newStatus];
         redirect(
             "/admin/orders.php?view=detail&id={$orderId}",
@@ -109,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $existingNotes = $stmt->fetchColumn() ?: '';
 
         $timestamp   = date('d M Y H:i');
-        $adminName   = get_user_name() ?? 'Admin';
+        $adminName   = admin_user_name() ?? 'Admin';
         $appendedNote = $existingNotes
             . "\n[Admin – {$adminName}, {$timestamp}]: " . $note;
 

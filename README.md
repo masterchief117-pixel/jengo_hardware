@@ -167,6 +167,18 @@ store the plain-text password in the database. Then sign in at
 `http://localhost/jengo_hardware/admin/login.php`. Admin access does not use the
 regular `/login.php` flow.
 
+#### Employees and Deliveries
+
+The admin portal includes an employee roster at `/admin/employees.php` and a
+delivery board at `/admin/deliveries.php`. Employee age is calculated from date
+of birth; monthly salaries are stored in KES. Hiring, termination, and re-hiring
+update the employee record and add an employment-history event. Marking a delivery
+as delivered moves it into the delivery records view.
+
+For an existing database, import `database/operations_management.sql` after
+`database/admin_auth.sql`. Fresh installations receive these tables from
+`database/schema.sql`.
+
 ---
 
 ### Step 3 — Configure the `.env` File

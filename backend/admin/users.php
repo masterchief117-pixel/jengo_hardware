@@ -20,7 +20,7 @@ require_once __DIR__ . '/../../admin/auth.php';
 require_admin_login();
 
 $pdo    = db();
-$selfId = get_user_id();   // Logged-in admin's own ID (protected from demotion)
+$selfId = null;
 
 // ══════════════════════════════════════════════════════════════════════════
 // VALID ROLES

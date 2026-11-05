@@ -107,9 +107,10 @@ $shippingFee    = 0.0;
 $freeShipThresh = 5000.0;
 $errors         = [];
 $old            = [];
+$mpesaPostPhone = null;
 
 // ══════════════════════════════════════════════════════════════════════════
-// POST HANDLER — save order & redirect to payment
+// POST HANDLER — save order and prepare the payment handoff
 // ══════════════════════════════════════════════════════════════════════════
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -229,12 +230,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Clear cart
             $_SESSION['cart'] = [];
 
-            // Redirect to payment handler
-            $paymentRoute = $old['payment_method'] === 'mpesa'
-                ? '/payments/mpesa_push.php'
-                : '/payments/paystack_init.php';
-
-            redirect($paymentRoute);
+            if ($old['payment_method'] === 'mpesa') {
+                $_SESSION['mpesa_push_token'] = bin2hex(random_bytes(32));
+                $mpesaPostPhone = $normPhone;
+            } else {
+                redirect('/payments/paystack_init.php');
+            }
 
         } catch (\Exception $e) {
             $pdo->rollBack();
@@ -267,6 +268,39 @@ if ($userPhone === '') {
     $row = $pdo->prepare('SELECT phone FROM users WHERE id = ? LIMIT 1');
     $row->execute([get_user_id()]);
     $userPhone = $row->fetchColumn() ?: '';
+}
+
+if ($mpesaPostPhone !== null) {
+    $mpesaPushUrl = rtrim((string) env('APP_URL', ''), '/') . '/payments/mpesa_push.php';
+    $safePushUrl = htmlspecialchars($mpesaPushUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $safePhone = htmlspecialchars($mpesaPostPhone, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $safeToken = htmlspecialchars(
+        (string) $_SESSION['mpesa_push_token'],
+        ENT_QUOTES | ENT_SUBSTITUTE,
+        'UTF-8'
+    );
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Connecting to M-Pesa</title>
+    </head>
+    <body>
+        <p>Connecting securely to M-Pesa…</p>
+        <form id="mpesa-push-handoff" method="post" action="<?= $safePushUrl ?>">
+            <input type="hidden" name="phone" value="<?= $safePhone ?>">
+            <input type="hidden" name="csrf_token" value="<?= $safeToken ?>">
+            <button type="submit">Continue to M-Pesa</button>
+        </form>
+        <script>
+            document.getElementById('mpesa-push-handoff').submit();
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
 }
 
 $pageTitle = 'Checkout';
@@ -483,31 +517,26 @@ require_once __DIR__ . '/includes/header.php';
                         M-Pesa Phone Number
                         <span class="required" aria-hidden="true">*</span>
                     </label>
-                    <div class="relative">
-                        <span class="absolute inset-y-0 left-0 flex items-center
-                                     pl-3 pointer-events-none text-sm text-gray-500
-                                     select-none" aria-hidden="true">
-                            🇰🇪 +254
-                        </span>
-                        <input type="tel"
-                               id="mpesa-phone"
-                               name="phone"
-                               class="form-input pl-20 <?= isset($errors['phone']) ? 'is-error' : '' ?>"
-                               value="<?= htmlspecialchars($old['phone'] ?? $userPhone) ?>"
-                               placeholder="0712 345 678"
-                               maxlength="15"
-                               autocomplete="tel"
-                               data-phone-input
-                               data-error-id="err-mpesa-phone"
-                               aria-describedby="err-mpesa-phone mpesa-phone-hint" />
-                    </div>
+                    <input type="tel"
+                           id="mpesa-phone"
+                           name="phone"
+                           class="form-input <?= isset($errors['phone']) ? 'is-error' : '' ?>"
+                           value="<?= htmlspecialchars($old['phone'] ?? $userPhone, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                           placeholder="0712 345 678 or 254712345678"
+                           maxlength="16"
+                           inputmode="tel"
+                           autocomplete="tel"
+                           data-phone-input
+                           data-error-id="err-mpesa-phone"
+                           aria-describedby="err-mpesa-phone mpesa-phone-hint" />
                     <p id="err-mpesa-phone"
                        class="form-error-msg <?= isset($errors['phone']) ? '' : 'hidden' ?>"
                        role="alert">
                         <?= htmlspecialchars($errors['phone'] ?? '') ?>
                     </p>
                     <p id="mpesa-phone-hint" class="form-hint">
-                        You will receive an STK Push prompt on this number.
+                        Editable number for the STK Push. Use 07XXXXXXXX, 01XXXXXXXX,
+                        2547XXXXXXXX, 2541XXXXXXXX, or +254 format.
                     </p>
                 </div>
             </div>
@@ -676,6 +705,39 @@ require_once __DIR__ . '/includes/header.php';
     var paymentInputs = document.querySelectorAll('[name="payment_method"]');
     var mpesaField    = document.getElementById('mpesa-phone-field');
     var mpesaInput    = document.getElementById('mpesa-phone');
+    var checkoutForm  = document.querySelector('form[aria-label="Checkout form"]');
+
+    function normalizeMpesaPhone(value) {
+        var phone = value.replace(/[\s\-().]/g, '');
+        if (phone.startsWith('+254')) {
+            phone = phone.slice(1);
+        } else if (phone.startsWith('0') && phone.length === 10) {
+            phone = '254' + phone.slice(1);
+        }
+        return /^254(7[0-9]{8}|1[0-1][0-9]{7})$/.test(phone) ? phone : null;
+    }
+
+    if (mpesaInput && checkoutForm) {
+        checkoutForm.addEventListener('submit', function (event) {
+            var selectedPayment = document.querySelector('[name="payment_method"]:checked');
+            if (!selectedPayment || selectedPayment.value !== 'mpesa') return;
+
+            var normalizedPhone = normalizeMpesaPhone(mpesaInput.value.trim());
+            if (!normalizedPhone) {
+                event.preventDefault();
+                mpesaInput.setCustomValidity(
+                    'Enter a valid Kenyan mobile number, such as 0712 345 678 or 254712345678.'
+                );
+                mpesaInput.reportValidity();
+                return;
+            }
+            mpesaInput.setCustomValidity('');
+            mpesaInput.value = normalizedPhone;
+        });
+        mpesaInput.addEventListener('input', function () {
+            mpesaInput.setCustomValidity('');
+        });
+    }
 
     paymentInputs.forEach(function (radio) {
         radio.addEventListener('change', function () {

@@ -152,6 +152,8 @@ require_once __DIR__ . '/../includes/header.php';
                 ['Products', 'products.php'],
                 ['Orders', 'orders.php'],
                 ['Users', 'users.php'],
+                ['Employees', 'employees.php'],
+                ['Deliveries', 'deliveries.php'],
                 ['Payments', 'payments_record.php'],
             ];
             foreach ($navLinks as [$label, $file]):

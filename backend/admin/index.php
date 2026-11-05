@@ -246,7 +246,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <?= date('l, d F Y') ?> ·
                     Welcome back,
                     <span class="font-semibold text-orange">
-                        <?= htmlspecialchars(explode(' ', get_user_name() ?? 'Admin')[0]) ?>
+                        <?= htmlspecialchars(explode(' ', admin_user_name() ?? 'Admin')[0]) ?>
                     </span>
                 </p>
             </div>
