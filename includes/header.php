@@ -362,6 +362,15 @@ $flash = get_flash();
         </div>
     </div><!-- /mobile-menu -->
 </nav>
+<?php if (
+    is_logged_in()
+    && (
+        has_role('attendant')
+        || (has_any_role(['attendant', 'admin']) && str_contains((string) $currentPath, '/attendant/'))
+    )
+): ?>
+    <?php require __DIR__ . '/../attendant/includes/nav.php'; ?>
+<?php endif; ?>
 <!-- ═══════════════════════════════════════════════════════════════════════
      END NAVBAR
 ════════════════════════════════════════════════════════════════════════ -->

@@ -94,10 +94,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
             // Account disabled by admin
             $errors['general'] = 'Your account has been deactivated. Please contact support.';
 
-        } elseif ($user['role'] === 'admin') {
-            $errors['general'] = 'Admin accounts must sign in through the separate admin portal.';
-
         } else {
+            $employeeStatus = null;
+            if (in_array($user['role'], ['admin', 'attendant'], true)) {
+                $employeeStatement = $pdo->prepare(
+                    'SELECT employment_status FROM employees WHERE user_id = ? LIMIT 1'
+                );
+                $employeeStatement->execute([(int) $user['id']]);
+                $employeeStatus = $employeeStatement->fetchColumn();
+            }
+
             // ── SUCCESS ──────────────────────────────────────────────────
             // Clear any throttle data on successful login
             unset(
@@ -112,8 +118,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
                     ->execute([$newHash, $user['id']]);
             }
 
+            if (
+                in_array($user['role'], ['admin', 'attendant'], true) &&
+                $employeeStatus !== 'employed'
+            ) {
+                $user['role'] = 'customer';
+                login_user($user);
+                redirect(
+                    '/index.php',
+                    'Your staff access is no longer active. You are signed in as a customer.',
+                    'info'
+                );
+            }
+
+            if ($user['role'] === 'admin') {
+                header('Location: ' . rtrim((string) env('APP_URL', ''), '/') . '/admin/login.php');
+                exit;
+            }
+
             // Write session via auth.php helper
             login_user($user);
+
+            if ($user['role'] === 'attendant') {
+                redirect(
+                    '/attendant/index.php',
+                    'Welcome back, ' . explode(' ', $user['full_name'])[0] . '!',
+                    'success'
+                );
+            }
 
             // Honour a ?redirect= param set by require_login() guards
             $redirectTo = $_GET['redirect'] ?? '';
@@ -126,12 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
                 redirect($redirectTo);
             }
 
-            $welcomeMessage = 'Welcome back, ' . explode(' ', $user['full_name'])[0] . '!';
-            redirect(
-                role_dashboard_path(),
-                $welcomeMessage,
-                'success'
-            );
+            redirect('/index.php', 'Welcome back, ' . explode(' ', $user['full_name'])[0] . '!', 'success');
         }
     }
 }

@@ -22,6 +22,10 @@ require_attendant();
 
 $pdo         = db();
 $attendantId = get_user_id();
+if (empty($_SESSION['attendant_approval_csrf'])) {
+    $_SESSION['attendant_approval_csrf'] = bin2hex(random_bytes(32));
+}
+$approvalCsrfToken = (string) $_SESSION['attendant_approval_csrf'];
 
 // ══════════════════════════════════════════════════════════════════════════
 // POST — update order status
@@ -103,6 +107,19 @@ $stmtCounts = $pdo->query(
 $counts = $stmtCounts->fetch();
 
 // ══════════════════════════════════════════════════════════════════════════
+// APPROVAL REQUESTS
+// ══════════════════════════════════════════════════════════════════════════
+$approvalStmt = $pdo->prepare(
+    'SELECT id, action_type, action_payload, status, created_at
+     FROM approval_requests
+     WHERE attendant_id = ?
+     ORDER BY created_at DESC
+     LIMIT 10'
+);
+$approvalStmt->execute([$attendantId]);
+$approvalRequests = $approvalStmt->fetchAll();
+
+// ══════════════════════════════════════════════════════════════════════════
 // PAID ORDERS — main list
 // ══════════════════════════════════════════════════════════════════════════
 $stmtPaid = $pdo->query(
@@ -174,12 +191,91 @@ require_once __DIR__ . '/../includes/header.php';
             <?= date('l, d F Y') ?> · <?= date('H:i') ?>
         </p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
+        <a href="<?= $base ?>/attendant/pos.php" class="btn btn-primary btn-sm">POS</a>
+        <a href="<?= $base ?>/attendant/inventory.php" class="btn btn-secondary btn-sm">Inventory Lookup</a>
+        <a href="<?= $base ?>/attendant/quotes.php" class="btn btn-secondary btn-sm">Quotes &amp; Customers</a>
+        <a href="<?= $base ?>/attendant/shift.php" class="btn btn-secondary btn-sm">My Shift</a>
+        <a href="<?= $base ?>/attendant/approvals.php" class="btn btn-secondary btn-sm">Pending Approvals Status</a>
         <span class="badge badge-orange capitalize"><?= get_user_role() ?></span>
         <a href="<?= $base ?>/logout.php"
            class="btn btn-secondary btn-sm">Sign Out</a>
     </div>
 </div>
+
+<section class="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5"
+         aria-labelledby="approval-request-heading">
+    <div class="mb-4">
+        <h2 id="approval-request-heading" class="text-lg font-bold text-gray-900">
+            Request Admin Approval
+        </h2>
+        <p class="mt-1 text-sm text-gray-600">
+            Submit a critical action for review. Include its details as a JSON object.
+        </p>
+    </div>
+    <form method="post" action="<?= htmlspecialchars($base) ?>/attendant/request_approval.php"
+          class="grid gap-3 md:grid-cols-[12rem_minmax(0,1fr)_auto]">
+        <input type="hidden" name="csrf_token"
+               value="<?= htmlspecialchars($approvalCsrfToken, ENT_QUOTES, 'UTF-8') ?>">
+        <label>
+            <span class="form-label">Action type</span>
+            <select name="action_type" class="form-input" required>
+                <option value="large_discount">Large discount</option>
+                <option value="price_override">Price override</option>
+                <option value="other_action">Other</option>
+            </select>
+        </label>
+        <label>
+            <span class="form-label">Action details (JSON)</span>
+            <textarea name="action_payload" class="form-input min-h-10" rows="2"
+                      maxlength="10000" required
+                      placeholder='{"cart_id": 45, "requested_discount": 5000}'></textarea>
+        </label>
+        <div class="flex items-end">
+            <button type="submit" class="btn btn-primary whitespace-nowrap">
+                Request Approval
+            </button>
+        </div>
+    </form>
+
+    <?php if ($approvalRequests !== []): ?>
+        <div class="mt-5 overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="border-b border-amber-200 text-gray-600">
+                        <th class="py-2 pr-4">Action</th>
+                        <th class="py-2 pr-4">Details</th>
+                        <th class="py-2 pr-4">Requested</th>
+                        <th class="py-2">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($approvalRequests as $request): ?>
+                        <?php $requestStatus = (string) $request['status']; ?>
+                        <tr class="border-b border-amber-100 last:border-0">
+                            <td class="py-3 pr-4"><?= htmlspecialchars((string) $request['action_type']) ?></td>
+                            <td class="py-3 pr-4">
+                                <code class="break-all text-xs"><?= htmlspecialchars((string) $request['action_payload']) ?></code>
+                            </td>
+                            <td class="py-3 pr-4 whitespace-nowrap">
+                                <?= htmlspecialchars((string) $request['created_at']) ?>
+                            </td>
+                            <td class="py-3">
+                                <?php if ($requestStatus === 'pending'): ?>
+                                    <span class="badge badge-warning">Pending Admin Approval...</span>
+                                <?php elseif ($requestStatus === 'approved'): ?>
+                                    <span class="badge badge-success">Approved — authorized to proceed</span>
+                                <?php else: ?>
+                                    <span class="badge badge-charcoal">Rejected</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
 
 
 <!-- ══════════════════════════════════════════════════════════════════════

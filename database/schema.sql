@@ -57,10 +57,11 @@ CREATE TABLE IF NOT EXISTS employees (
     full_name         VARCHAR(120) NOT NULL,
     job_title         VARCHAR(120) NOT NULL,
     monthly_salary    DECIMAL(12, 2) NOT NULL,
-    date_of_birth     DATE NOT NULL,
-    sex               ENUM('female', 'male', 'other', 'prefer_not_to_say') NOT NULL,
+    date_of_birth     DATE NULL,
+    sex               ENUM('female', 'male', 'other', 'prefer_not_to_say') NULL,
     phone             VARCHAR(40) NULL,
     email             VARCHAR(180) NULL,
+    user_id           INT UNSIGNED NULL,
     hired_at          DATE NOT NULL,
     employment_status ENUM('employed', 'terminated') NOT NULL DEFAULT 'employed',
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -68,7 +69,11 @@ CREATE TABLE IF NOT EXISTS employees (
                               ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_employees_status_name (employment_status, full_name),
-    KEY idx_employees_email (email)
+    KEY idx_employees_email (email),
+    UNIQUE KEY uq_employees_user_id (user_id),
+    CONSTRAINT fk_employees_user
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS employee_employment_events (
@@ -84,6 +89,29 @@ CREATE TABLE IF NOT EXISTS employee_employment_events (
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_employee_events_admin
         FOREIGN KEY (admin_user_id) REFERENCES admin_users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- TABLE: approval_requests
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    attendant_id    INT UNSIGNED NOT NULL,
+    action_type     VARCHAR(80) NOT NULL,
+    action_payload  JSON NOT NULL,
+    status          ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+    admin_id        INT UNSIGNED NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at     TIMESTAMP NULL DEFAULT NULL,
+    PRIMARY KEY (id),
+    KEY idx_approval_requests_status_date (status, created_at),
+    KEY idx_approval_requests_attendant_date (attendant_id, created_at),
+    CONSTRAINT fk_approval_requests_attendant
+        FOREIGN KEY (attendant_id) REFERENCES users (id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_approval_requests_admin
+        FOREIGN KEY (admin_id) REFERENCES admin_users (id)
         ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -138,6 +166,7 @@ CREATE TABLE IF NOT EXISTS products (
     slug          VARCHAR(220)      NOT NULL,
     description   TEXT                  NULL,
     sku           VARCHAR(80)           NULL,                 -- Stock Keeping Unit / barcode
+    location      VARCHAR(120)          NULL DEFAULT 'Shop floor',
     price         DECIMAL(12, 2)    NOT NULL DEFAULT 0.00,    -- Selling price (KES)
     cost_price    DECIMAL(12, 2)    NOT NULL DEFAULT 0.00,    -- Purchase / cost price (KES)
     stock_qty     INT               NOT NULL DEFAULT 0,       -- Current units in stock
@@ -269,6 +298,97 @@ CREATE TABLE IF NOT EXISTS payments (
     CONSTRAINT fk_payments_user
         FOREIGN KEY (user_id) REFERENCES users (id)
         ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =============================================================================
+-- TABLE: sales
+-- In-store POS tickets. status is 'completed' until an approved void sets 'Voided'.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS sales (
+    id               INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+    sale_number      VARCHAR(30)    NOT NULL,
+    attendant_id     INT UNSIGNED   NOT NULL,
+    customer_name    VARCHAR(120)       NULL,
+    subtotal         DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    discount_percent DECIMAL(6, 2)  NOT NULL DEFAULT 0.00,
+    discount_amount  DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    total_amount     DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    payment_method   ENUM('cash', 'mpesa', 'card') NOT NULL DEFAULT 'cash',
+    status           VARCHAR(20)    NOT NULL DEFAULT 'completed',
+    notes            TEXT               NULL,
+    created_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_sales_number (sale_number),
+    KEY idx_sales_attendant_date (attendant_id, created_at),
+    CONSTRAINT fk_sales_attendant
+        FOREIGN KEY (attendant_id) REFERENCES users (id)
+        ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS sale_items (
+    id            INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+    sale_id       INT UNSIGNED   NOT NULL,
+    product_id    INT UNSIGNED       NULL,
+    product_name  VARCHAR(200)   NOT NULL,
+    sku           VARCHAR(80)        NULL,
+    catalog_price DECIMAL(12, 2) NOT NULL,
+    unit_price    DECIMAL(12, 2) NOT NULL,
+    quantity      INT            NOT NULL,
+    line_total    DECIMAL(12, 2) NOT NULL,
+
+    PRIMARY KEY (id),
+    KEY fk_sale_items_sale (sale_id),
+    KEY fk_sale_items_product (product_id),
+    CONSTRAINT fk_sale_items_sale
+        FOREIGN KEY (sale_id) REFERENCES sales (id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_sale_items_product
+        FOREIGN KEY (product_id) REFERENCES products (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS quotes (
+    id             INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+    quote_number   VARCHAR(30)    NOT NULL,
+    attendant_id   INT UNSIGNED   NOT NULL,
+    customer_id    INT UNSIGNED       NULL,
+    customer_name  VARCHAR(120)   NOT NULL,
+    customer_phone VARCHAR(40)        NULL,
+    notes          TEXT               NULL,
+    subtotal       DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    status         ENUM('draft', 'pending_approval', 'accepted', 'expired')
+                                  NOT NULL DEFAULT 'draft',
+    created_at     TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_quotes_number (quote_number),
+    KEY fk_quotes_attendant (attendant_id),
+    KEY fk_quotes_customer (customer_id),
+    CONSTRAINT fk_quotes_attendant
+        FOREIGN KEY (attendant_id) REFERENCES users (id)
+        ON UPDATE CASCADE,
+    CONSTRAINT fk_quotes_customer
+        FOREIGN KEY (customer_id) REFERENCES users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS quote_items (
+    id            INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+    quote_id      INT UNSIGNED   NOT NULL,
+    product_id    INT UNSIGNED       NULL,
+    product_name  VARCHAR(200)   NOT NULL,
+    catalog_price DECIMAL(12, 2) NOT NULL,
+    unit_price    DECIMAL(12, 2) NOT NULL,
+    quantity      INT            NOT NULL,
+    line_total    DECIMAL(12, 2) NOT NULL,
+
+    PRIMARY KEY (id),
+    KEY fk_quote_items_quote (quote_id),
+    CONSTRAINT fk_quote_items_quote
+        FOREIGN KEY (quote_id) REFERENCES quotes (id)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

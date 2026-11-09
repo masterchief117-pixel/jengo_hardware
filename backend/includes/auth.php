@@ -277,6 +277,19 @@ function require_attendant(): void
             'error'
         );
     }
+
+    $statement = db()->prepare(
+        'SELECT employment_status FROM employees WHERE user_id = ? LIMIT 1'
+    );
+    $statement->execute([get_user_id()]);
+    if ($statement->fetchColumn() !== 'employed') {
+        $_SESSION['user_role'] = 'customer';
+        redirect(
+            '/index.php',
+            'Your staff access is no longer active. You are signed in as a customer.',
+            'info'
+        );
+    }
 }
 
 /**
@@ -302,7 +315,7 @@ function redirect_if_logged_in(): void
 function role_dashboard_path(): string
 {
     return match (get_user_role()) {
-        'admin'     => '/admin/index.php',
+        'admin'     => '/admin/login.php',
         'attendant' => '/attendant/index.php',
         'customer'  => '/customer/dashboard.php',
         default     => '/index.php',

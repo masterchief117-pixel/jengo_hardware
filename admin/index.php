@@ -57,8 +57,9 @@ $kpi = $kpiStmt->fetch();
 // ══════════════════════════════════════════════════════════════════════════
 $productStmt = $pdo->query(
     "SELECT
-        COUNT(*)                                     AS total_products,
+        COUNT(DISTINCT id)                           AS total_products,
         SUM(is_active = 1)                           AS active_products,
+        COALESCE(SUM(stock_qty), 0)                  AS total_items_in_stock,
         SUM(stock_qty = 0)                           AS out_of_stock,
         SUM(stock_qty > 0 AND stock_qty <= low_stock_threshold)
                                                      AS low_stock_count
@@ -114,14 +115,11 @@ foreach ($revenueRows as $row) {
 // 5. LOW STOCK PRODUCTS
 // ══════════════════════════════════════════════════════════════════════════
 $lowStockStmt = $pdo->query(
-    "SELECT p.id, p.name, p.sku, p.stock_qty, p.low_stock_threshold,
-            c.name AS category_name
-     FROM   products p
-     LEFT JOIN categories c ON c.id = p.category_id
-     WHERE  p.is_active = 1
-       AND  p.stock_qty <= p.low_stock_threshold
-     ORDER  BY p.stock_qty ASC
-     LIMIT  10"
+    "SELECT id, name, sku, stock_qty
+     FROM products
+     WHERE stock_qty <= 10
+     ORDER BY stock_qty ASC
+     LIMIT 5"
 );
 $lowStockProducts = $lowStockStmt->fetchAll();
 
@@ -137,6 +135,21 @@ $recentStmt = $pdo->query(
      LIMIT  10"
 );
 $recentOrders = $recentStmt->fetchAll();
+
+$approvalStmt = $pdo->query(
+    "SELECT requests.id, requests.attendant_id, requests.action_type,
+            requests.action_payload, requests.created_at,
+            users.full_name AS attendant_name
+     FROM approval_requests AS requests
+     INNER JOIN users ON users.id = requests.attendant_id
+     WHERE requests.status = 'pending'
+     ORDER BY requests.created_at ASC"
+);
+$pendingApprovals = $approvalStmt->fetchAll();
+if (empty($_SESSION['admin_approval_csrf'])) {
+    $_SESSION['admin_approval_csrf'] = bin2hex(random_bytes(32));
+}
+$approvalCsrfToken = (string) $_SESSION['admin_approval_csrf'];
 
 // ── Order status badge helper ─────────────────────────────────────────────
 function admin_badge(string $status): string
@@ -269,14 +282,136 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
 
+        <section class="mb-8 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm"
+                 aria-labelledby="pending-approvals-heading">
+            <div class="mb-4 flex items-center justify-between gap-3">
+                <div>
+                    <h2 id="pending-approvals-heading" class="text-lg font-bold text-gray-900">
+                        Pending Approvals
+                    </h2>
+                    <p class="mt-1 text-sm text-gray-500">
+                        <?= count($pendingApprovals) ?> request<?= count($pendingApprovals) === 1 ? '' : 's' ?> awaiting review
+                    </p>
+                </div>
+            </div>
+
+            <?php if ($pendingApprovals === []): ?>
+                <p class="rounded-lg bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+                    No pending attendant requests.
+                </p>
+            <?php else: ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="border-b text-gray-500">
+                                <th class="py-3 pr-4">Attendant</th>
+                                <th class="py-3 pr-4">Action Type</th>
+                                <th class="py-3 pr-4">Details</th>
+                                <th class="py-3 pr-4">Time Requested</th>
+                                <th class="py-3">Decision</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($pendingApprovals as $approval): ?>
+                                <?php
+                                $payload = json_decode((string) $approval['action_payload'], true);
+                                $payloadText = json_encode(
+                                    $payload,
+                                    JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                                );
+                                ?>
+                                <tr class="border-b last:border-0 align-top">
+                                    <td class="py-3 pr-4 font-medium">
+                                        <?= htmlspecialchars((string) $approval['attendant_name'], ENT_QUOTES, 'UTF-8') ?>
+                                    </td>
+                                    <td class="py-3 pr-4">
+                                        <?= htmlspecialchars((string) $approval['action_type'], ENT_QUOTES, 'UTF-8') ?>
+                                    </td>
+                                    <td class="max-w-sm py-3 pr-4">
+                                        <pre class="whitespace-pre-wrap break-words text-xs"><?= htmlspecialchars($payloadText ?: '{}', ENT_QUOTES, 'UTF-8') ?></pre>
+                                    </td>
+                                    <td class="py-3 pr-4 whitespace-nowrap">
+                                        <?= htmlspecialchars((string) $approval['created_at'], ENT_QUOTES, 'UTF-8') ?>
+                                    </td>
+                                    <td class="py-3">
+                                        <div class="flex gap-2">
+                                            <?php foreach (['approve' => 'Approve', 'reject' => 'Reject'] as $decision => $label): ?>
+                                                <form method="post" action="<?= $base ?>/admin/process_approval.php">
+                                                    <input type="hidden" name="csrf_token"
+                                                           value="<?= htmlspecialchars($approvalCsrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                                                    <input type="hidden" name="request_id"
+                                                           value="<?= (int) $approval['id'] ?>">
+                                                    <input type="hidden" name="decision"
+                                                           value="<?= $decision ?>">
+                                                    <button type="submit"
+                                                            class="rounded-md px-3 py-1.5 text-xs font-semibold text-white <?= $decision === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700' ?>">
+                                                        <?= $label ?>
+                                                    </button>
+                                                </form>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </section>
+
+        <section class="mb-8 rounded-2xl border border-red-100 bg-white p-5 shadow-sm"
+                 aria-labelledby="low-stock-heading">
+            <div class="mb-4 flex items-center justify-between gap-3">
+                <h2 id="low-stock-heading" class="text-lg font-bold text-gray-900">
+                    Low Stock Alerts
+                </h2>
+                <a href="<?= $base ?>/admin/products.php"
+                   class="text-xs font-semibold text-orange hover:underline">
+                    Manage Products →
+                </a>
+            </div>
+            <?php if ($lowStockProducts === []): ?>
+                <p class="rounded-lg bg-green-50 px-4 py-6 text-center text-sm text-green-700">
+                    All stock levels look good!
+                </p>
+            <?php else: ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="border-b text-gray-500">
+                                <th class="py-3 pr-4">Product Name</th>
+                                <th class="py-3 pr-4">SKU</th>
+                                <th class="py-3 text-right">Remaining Stock</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($lowStockProducts as $product): ?>
+                                <tr class="border-b last:border-0">
+                                    <td class="py-3 pr-4 font-medium text-gray-800">
+                                        <?= htmlspecialchars((string) $product['name'], ENT_QUOTES, 'UTF-8') ?>
+                                    </td>
+                                    <td class="py-3 pr-4 font-mono text-xs text-gray-500">
+                                        <?= htmlspecialchars((string) ($product['sku'] ?? '—'), ENT_QUOTES, 'UTF-8') ?>
+                                    </td>
+                                    <td class="py-3 text-right font-bold text-red-600">
+                                        <?= (int) $product['stock_qty'] ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </section>
+
 
         <!-- ══════════════════════════════════════════════════════════════
              SUMMARY KPI CARDS
         ══════════════════════════════════════════════════════════════ -->
-        <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
 
             <!-- Total Revenue -->
-            <div class="stat-card col-span-2 sm:col-span-1">
+            <div class="stat-card">
                 <div class="stat-card__icon">
                     <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg"
                          fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -344,6 +479,24 @@ require_once __DIR__ . '/../includes/header.php';
                     <p class="text-xs text-gray-400 font-medium mt-1">
                         Pending / Processing
                     </p>
+                </div>
+            </div>
+
+            <!-- Total Items in Stock -->
+            <div class="stat-card">
+                <div class="stat-card__icon" style="background:#EFF6FF; color:#2563EB;">
+                    <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg"
+                         fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                         stroke-width="1.8" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                              d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="stat-card__value">
+                        <?= number_format((int) ($productStats['total_items_in_stock'] ?? 0)) ?>
+                    </p>
+                    <p class="stat-card__label">Total Items in Stock</p>
                 </div>
             </div>
 
@@ -546,85 +699,6 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
 
 
-        <!-- ══════════════════════════════════════════════════════════════
-             LOW STOCK ALERTS
-        ══════════════════════════════════════════════════════════════ -->
-        <?php if (!empty($lowStockProducts)): ?>
-        <section class="mb-8" aria-labelledby="low-stock-heading">
-            <div class="flex items-center justify-between mb-4">
-                <h2 id="low-stock-heading"
-                    class="section-heading text-base flex items-center gap-2">
-                    Low Stock Alerts
-                    <span class="inline-flex items-center justify-center
-                                 w-5 h-5 rounded-full bg-red-500 text-white
-                                 text-xs font-bold" aria-hidden="true">
-                        <?= min(count($lowStockProducts), 9) ?><?= count($lowStockProducts) >= 10 ? '+' : '' ?>
-                    </span>
-                </h2>
-                <a href="<?= $base ?>/admin/products.php"
-                   class="text-xs text-orange font-semibold hover:underline">
-                    Manage Products →
-                </a>
-            </div>
-
-            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <table class="data-table" aria-label="Low stock products">
-                    <thead>
-                        <tr>
-                            <th scope="col">Product</th>
-                            <th scope="col">Category</th>
-                            <th scope="col">SKU</th>
-                            <th scope="col" class="text-center">In Stock</th>
-                            <th scope="col" class="text-center">Threshold</th>
-                            <th scope="col" class="text-center">Status</th>
-                            <th scope="col"><span class="sr-only">Action</span></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($lowStockProducts as $p):
-                            $isOut = (int)$p['stock_qty'] === 0;
-                        ?>
-                        <tr>
-                            <td class="font-medium text-gray-800">
-                                <?= htmlspecialchars($p['name']) ?>
-                            </td>
-                            <td class="text-gray-500 text-sm">
-                                <?= htmlspecialchars($p['category_name'] ?? '—') ?>
-                            </td>
-                            <td class="font-mono text-xs text-gray-400">
-                                <?= htmlspecialchars($p['sku'] ?? '—') ?>
-                            </td>
-                            <td class="text-center">
-                                <span class="font-bold text-lg
-                                             <?= $isOut ? 'text-red-600' : 'text-amber-600' ?>">
-                                    <?= (int)$p['stock_qty'] ?>
-                                </span>
-                            </td>
-                            <td class="text-center text-gray-400 text-sm">
-                                <?= (int)$p['low_stock_threshold'] ?>
-                            </td>
-                            <td class="text-center">
-                                <?php if ($isOut): ?>
-                                    <span class="badge badge-error">Out of Stock</span>
-                                <?php else: ?>
-                                    <span class="badge badge-warning">Low Stock</span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <a href="<?= $base ?>/admin/products.php?edit=<?= $p['id'] ?>"
-                                   class="text-xs text-orange font-semibold
-                                          hover:underline whitespace-nowrap">
-                                    Restock →
-                                </a>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-        <?php endif; ?>
-
 
         <!-- ══════════════════════════════════════════════════════════════
              QUICK LINKS ROW
@@ -635,6 +709,7 @@ require_once __DIR__ . '/../includes/header.php';
                 ['Add Product',   '/admin/products.php?action=add',  'bg-orange      text-white', 'M12 4v16m8-8H4'],
                 ['All Orders',    '/admin/orders.php',               'bg-blue-600    text-white', 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
                 ['Manage Users',  '/admin/users.php',                'bg-purple-600  text-white', 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z'],
+                ['Add User',      '/admin/add_user.php',             'bg-indigo-600  text-white', 'M12 4v16m8-8H4'],
                 ['Payment Logs',  '/admin/payments_record.php',     'bg-green-600   text-white', 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z'],
             ];
             foreach ($quickLinks as [$label, $href, $bg, $icon]): ?>

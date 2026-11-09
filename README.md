@@ -177,7 +177,18 @@ as delivered moves it into the delivery records view.
 
 For an existing database, import `database/operations_management.sql` after
 `database/admin_auth.sql`. Fresh installations receive these tables from
-`database/schema.sql`.
+`database/schema.sql`. If the employees table already exists, apply
+`database/link_employee_users.sql` and `database/employees_optional_profile.sql`
+once to add the employee-to-login link and allow unknown personal details.
+For an existing installation, also apply `database/approval_requests.sql` to
+enable attendant requests and the admin approval panel. Approval records the
+decision; the attendant must then proceed with the requested action.
+When adding an employee with an email, an existing user account with that email
+is linked; otherwise a login account is created. Newly created accounts use
+the default password `password123`; change it after the first sign-in.
+Creating an attendant or admin through `/admin/add_user.php` also creates an
+employed roster entry; date of birth and sex remain unset until provided on the
+employee edit form.
 
 ---
 

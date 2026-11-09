@@ -277,6 +277,19 @@ function require_attendant(): void
             'error'
         );
     }
+
+    $statement = db()->prepare(
+        'SELECT employment_status FROM employees WHERE user_id = ? LIMIT 1'
+    );
+    $statement->execute([get_user_id()]);
+    if ($statement->fetchColumn() !== 'employed') {
+        $_SESSION['user_role'] = 'customer';
+        redirect(
+            '/index.php',
+            'Your staff access is no longer active. You are signed in as a customer.',
+            'info'
+        );
+    }
 }
 
 /**

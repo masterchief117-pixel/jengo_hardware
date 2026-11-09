@@ -24,12 +24,27 @@ $pdo = db();
 // HELPERS
 // ══════════════════════════════════════════════════════════════════════════
 
+function admin_products_redirect(string $path, string $message = '', string $type = 'info'): never
+{
+    if ($message !== '') {
+        $_SESSION['flash_message'] = $message;
+        $_SESSION['flash_type'] = $type;
+    }
+
+    header('Location: ' . rtrim((string) env('APP_URL', ''), '/') . $path);
+    exit;
+}
+
 /**
  * Generate a URL-safe slug from a product name.
  */
 function make_slug(string $name, int $excludeId = 0, \PDO $pdo): string
 {
     $base = strtolower(trim(preg_replace('/[^a-z0-9]+/i', '-', $name), '-'));
+    if ($base === '') {
+        $base = 'product';
+    }
+
     $slug = $base;
     $i    = 1;
 
@@ -105,7 +120,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── SAVE (add or edit) ────────────────────────────────────────────────
     if ($action === 'save') {
         $id          = (int) ($_POST['product_id'] ?? 0);   // 0 = new
-        $categoryId  = (int) ($_POST['category_id'] ?? 0);
+        $categoryInput = $_POST['category_id'] ?? '';
+        $categoryId = is_string($categoryInput) || is_int($categoryInput)
+            ? filter_var($categoryInput, FILTER_VALIDATE_INT)
+            : false;
         $name        = trim($_POST['name']        ?? '');
         $description = trim($_POST['description'] ?? '');
         $sku         = trim($_POST['sku']          ?? '');
@@ -121,7 +139,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($price <= 0)          $errors['price'] = 'Price must be greater than zero.';
         if ($stockQty < 0)        $errors['stock_qty'] = 'Stock cannot be negative.';
         if ($threshold < 0)       $threshold = 0;
-        if ($categoryId < 1)      $categoryId = null;
+        if ($categoryId === false || $categoryId < 1) {
+            $categoryId = null;
+            $errors['category_id'] = 'Please select a valid category.';
+        } else {
+            $categoryCheck = $pdo->prepare('SELECT id FROM categories WHERE id = ? LIMIT 1');
+            $categoryCheck->execute([$categoryId]);
+            if ($categoryCheck->fetchColumn() === false) {
+                $errors['category_id'] = 'Invalid category selected.';
+            }
+        }
 
         // SKU uniqueness
         if ($sku !== '') {
@@ -135,36 +162,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errors)) {
             $slug = make_slug($name, $id, $pdo);
 
-            if ($id === 0) {
-                // INSERT
-                $pdo->prepare(
-                    'INSERT INTO products
-                        (category_id, name, slug, description, sku,
-                         price, cost_price, stock_qty, low_stock_threshold, is_active)
-                     VALUES (?,?,?,?,?,?,?,?,?,?)'
-                )->execute([
-                    $categoryId, $name, $slug, $description ?: null,
-                    $sku ?: null, $price, $costPrice,
-                    $stockQty, $threshold, $isActive,
-                ]);
-                $id = (int) $pdo->lastInsertId();
-            } else {
-                // UPDATE
-                $pdo->prepare(
-                    'UPDATE products
-                     SET category_id = ?, name = ?, slug = ?, description = ?,
-                         sku = ?, price = ?, cost_price = ?,
-                         stock_qty = ?, low_stock_threshold = ?, is_active = ?
-                     WHERE id = ?'
-                )->execute([
-                    $categoryId, $name, $slug, $description ?: null,
-                    $sku ?: null, $price, $costPrice,
-                    $stockQty, $threshold, $isActive, $id,
-                ]);
+            try {
+                if ($id === 0) {
+                    $stmt = $pdo->prepare(
+                        'INSERT INTO products
+                            (category_id, name, slug, description, sku,
+                             price, cost_price, stock_qty, low_stock_threshold, is_active)
+                         VALUES (:category_id, :name, :slug, :description, :sku,
+                                 :price, :cost_price, :stock_qty, :low_stock_threshold, :is_active)'
+                    );
+                    $stmt->execute([
+                        'category_id' => $categoryId,
+                        'name' => $name,
+                        'slug' => $slug,
+                        'description' => $description ?: null,
+                        'sku' => $sku ?: null,
+                        'price' => $price,
+                        'cost_price' => $costPrice,
+                        'stock_qty' => $stockQty,
+                        'low_stock_threshold' => $threshold,
+                        'is_active' => $isActive,
+                    ]);
+                    $id = (int) $pdo->lastInsertId();
+                } else {
+                    $stmt = $pdo->prepare(
+                        'UPDATE products
+                         SET category_id = ?, name = ?, slug = ?, description = ?,
+                             sku = ?, price = ?, cost_price = ?,
+                             stock_qty = ?, low_stock_threshold = ?, is_active = ?
+                         WHERE id = ?'
+                    );
+                    $stmt->execute([
+                        $categoryId, $name, $slug, $description ?: null,
+                        $sku ?: null, $price, $costPrice,
+                        $stockQty, $threshold, $isActive, $id,
+                    ]);
+                }
+            } catch (PDOException $exception) {
+                die('DB Error: ' . $exception->getMessage());
             }
 
             // Image upload (runs after insert so we have the product ID)
-            if (!empty($_FILES['image']['name'])) {
+            if (empty($errors) && !empty($_FILES['image']['name'])) {
                 try {
                     $imagePath = handle_image_upload($_FILES['image'], $id);
                     if ($imagePath !== null) {
@@ -178,9 +217,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (empty($errors)) {
-                redirect(
+                admin_products_redirect(
                     '/admin/products.php',
-                    ($id ? 'Product updated' : 'Product added') . ' successfully.',
+                    ($action === 'save' && (int) ($_POST['product_id'] ?? 0) === 0
+                        ? 'Product added'
+                        : 'Product updated') . ' successfully.',
                     'success'
                 );
             }
@@ -198,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare(
                 'UPDATE products SET is_active = 0 WHERE id = ?'
             )->execute([$id]);
-            redirect('/admin/products.php', 'Product removed from the shop.', 'info');
+            admin_products_redirect('/admin/products.php', 'Product removed from the shop.', 'info');
         }
     }
 
@@ -209,7 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare(
                 'UPDATE products SET is_active = 1 WHERE id = ?'
             )->execute([$id]);
-            redirect('/admin/products.php', 'Product restored.', 'success');
+            admin_products_redirect('/admin/products.php', 'Product restored.', 'success');
         }
     }
 
@@ -221,7 +262,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare(
                 'UPDATE products SET stock_qty = ? WHERE id = ?'
             )->execute([$newStock, $id]);
-            redirect('/admin/products.php', 'Stock updated.', 'success');
+            admin_products_redirect('/admin/products.php', 'Stock updated.', 'success');
         }
     }
 }
@@ -245,7 +286,7 @@ if ($view === 'edit' && $editId > 0) {
     $stmt->execute([$editId]);
     $editProduct = $stmt->fetch();
     if (!$editProduct) {
-        redirect('/admin/products.php', 'Product not found.', 'error');
+        admin_products_redirect('/admin/products.php', 'Product not found.', 'error');
     }
 }
 
@@ -401,15 +442,21 @@ function render_product_form(
                     </div>
                     <div class="form-group mb-0">
                         <label for="category_id" class="form-label">Category</label>
-                        <select id="category_id" name="category_id" class="form-select">
-                            <option value="0">— None —</option>
+                        <select id="category_id" name="category_id" class="form-select"
+                                required>
+                            <option value="">-- Select a category --</option>
                             <?php foreach ($cats as $cat): ?>
-                            <option value="<?= $cat['id'] ?>"
+                            <option value="<?= (int) $cat['id'] ?>"
                                 <?= (int)$v('category_id', 0) === (int)$cat['id'] ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($cat['name']) ?>
                             </option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if (isset($errors['category_id'])): ?>
+                        <p class="form-error-msg" role="alert">
+                            <?= htmlspecialchars($errors['category_id']) ?>
+                        </p>
+                        <?php endif; ?>
                     </div>
                 </div>
 

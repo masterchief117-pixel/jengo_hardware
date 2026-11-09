@@ -33,11 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fullName = trim((string) ($_POST['full_name'] ?? ''));
             $jobTitle = trim((string) ($_POST['job_title'] ?? ''));
             $salaryInput = trim((string) ($_POST['monthly_salary'] ?? ''));
-            $dateOfBirth = trim((string) ($_POST['date_of_birth'] ?? ''));
+            $dateOfBirth = trim((string) ($_POST['dob'] ?? $_POST['date_of_birth'] ?? ''));
             $sex = (string) ($_POST['sex'] ?? '');
             $phone = trim((string) ($_POST['phone'] ?? ''));
             $email = strtolower(trim((string) ($_POST['email'] ?? '')));
-            $hiredAt = trim((string) ($_POST['hired_at'] ?? ''));
+            $hiredAt = trim((string) ($_POST['hire_date'] ?? $_POST['hired_at'] ?? ''));
             $validSexes = ['female', 'male', 'other', 'prefer_not_to_say'];
             $validDate = static function (string $date): bool {
                 $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
@@ -60,13 +60,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ) {
                 $errors[] = 'Enter a valid non-negative monthly salary in KES.';
             }
-            if (
-                !$validDate($dateOfBirth) ||
-                new DateTimeImmutable($dateOfBirth) >= new DateTimeImmutable('today')
-            ) {
-                $errors[] = 'Enter a valid date of birth in the past.';
+            if ($dateOfBirth !== '') {
+                if (
+                    !$validDate($dateOfBirth) ||
+                    new DateTimeImmutable($dateOfBirth) >= new DateTimeImmutable('today')
+                ) {
+                    $errors[] = 'Enter a valid date of birth in the past.';
+                }
             }
-            if (!in_array($sex, $validSexes, true)) {
+            if ($sex !== '' && !in_array($sex, $validSexes, true)) {
                 $errors[] = 'Choose a valid sex option.';
             }
             if (strlen($phone) > 40) {
@@ -76,6 +78,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = 'Enter a valid email address (up to 180 characters), or leave it blank.';
             }
             if (
+                $employeeId === 0 &&
+                $email !== '' &&
+                filter_var($email, FILTER_VALIDATE_EMAIL) &&
+                strlen($email) <= 180
+            ) {
+                try {
+                    $accountCheck = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+                    $accountCheck->execute([$email]);
+                } catch (PDOException $exception) {
+                    die('Database Error: ' . $exception->getMessage());
+                }
+                if ($accountCheck->fetchColumn() === false) {
+                    if ($phone === '') {
+                        $errors[] = 'A phone number is required to create a linked login account.';
+                    } elseif (strlen($phone) > 20) {
+                        $errors[] = 'Phone number must be 20 characters or fewer to create a login account.';
+                    }
+                }
+            }
+            if (
                 !$validDate($hiredAt) ||
                 new DateTimeImmutable($hiredAt) > new DateTimeImmutable('today')
             ) {
@@ -83,8 +105,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($employeeId > 0) {
-                $check = $pdo->prepare('SELECT id FROM employees WHERE id = ?');
-                $check->execute([$employeeId]);
+                try {
+                    $check = $pdo->prepare('SELECT id FROM employees WHERE id = ?');
+                    $check->execute([$employeeId]);
+                } catch (PDOException $exception) {
+                    die('Database Error: ' . $exception->getMessage());
+                }
                 if (!$check->fetchColumn()) {
                     $errors[] = 'That employee record could not be found.';
                 }
@@ -104,19 +130,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $fullName,
                             $jobTitle,
                             $salaryInput,
-                            $dateOfBirth,
-                            $sex,
+                            $dateOfBirth !== '' ? $dateOfBirth : null,
+                            $sex !== '' ? $sex : null,
                             $phone !== '' ? $phone : null,
                             $email !== '' ? $email : null,
                             $hiredAt,
                             $employeeId,
                         ]);
+                        $linkedUser = $pdo->prepare('SELECT user_id FROM employees WHERE id = ? FOR UPDATE');
+                        $linkedUser->execute([$employeeId]);
+                        $linkedUserId = $linkedUser->fetchColumn();
+                        if ($linkedUserId !== false && $linkedUserId !== null) {
+                            $syncUser = $pdo->prepare(
+                                'UPDATE users
+                                 SET full_name = ?, email = COALESCE(?, email),
+                                     phone = COALESCE(?, phone)
+                                 WHERE id = ?'
+                            );
+                            $syncUser->execute([
+                                $fullName,
+                                $email !== '' ? $email : null,
+                                $phone !== '' ? $phone : null,
+                                (int) $linkedUserId,
+                            ]);
+                        }
                     } else {
+                        $userId = null;
+                        if ($email !== '') {
+                            $account = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+                            $account->execute([$email]);
+                            $existingUserId = $account->fetchColumn();
+                            if ($existingUserId !== false) {
+                                $userId = (int) $existingUserId;
+                            } else {
+                                $role = stripos($jobTitle, 'admin') !== false
+                                    ? 'admin'
+                                    : 'attendant';
+                                $passwordHash = password_hash('password123', PASSWORD_BCRYPT, ['cost' => 12]);
+                                $createAccount = $pdo->prepare(
+                                    'INSERT INTO users (full_name, email, password_hash, phone, role)
+                                     VALUES (?, ?, ?, ?, ?)'
+                                );
+                                $createAccount->execute([
+                                    $fullName,
+                                    $email,
+                                    $passwordHash,
+                                    $phone,
+                                    $role,
+                                ]);
+                                $userId = (int) $pdo->lastInsertId();
+                            }
+                        }
+
                         $statement = $pdo->prepare(
                             'INSERT INTO employees
                                 (full_name, job_title, monthly_salary, date_of_birth, sex,
-                                 phone, email, hired_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                                 phone, email, hired_at, user_id, employment_status)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, \'employed\')'
                         );
                         $statement->execute([
                             $fullName,
@@ -127,6 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $phone !== '' ? $phone : null,
                             $email !== '' ? $email : null,
                             $hiredAt,
+                            $userId,
                         ]);
                         $employeeId = (int) $pdo->lastInsertId();
                         $event = $pdo->prepare(
@@ -143,8 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($pdo->inTransaction()) {
                         $pdo->rollBack();
                     }
-                    error_log('[Admin Employees] Save failed: ' . $exception->getMessage());
-                    $error = 'The employee record could not be saved. Please try again.';
+                    die('Database Error: ' . $exception->getMessage());
                 }
             } else {
                 $error = implode(' ', $errors);
@@ -196,8 +266,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
-                error_log('[Admin Employees] Status update failed: ' . $exception->getMessage());
-                $error = 'The employment status could not be updated. Please try again.';
+                die('Database Error: ' . $exception->getMessage());
             }
         } else {
             http_response_code(400);
@@ -229,7 +298,7 @@ if (in_array($view, ['edit', 'history'], true) && $employeeId > 0) {
     }
 }
 
-$statusFilter = (string) ($_GET['status'] ?? 'employed');
+$statusFilter = (string) ($_GET['status'] ?? 'all');
 if (!in_array($statusFilter, ['employed', 'terminated', 'all'], true)) {
     $statusFilter = 'employed';
 }
@@ -237,19 +306,23 @@ $search = trim((string) ($_GET['q'] ?? ''));
 $where = [];
 $params = [];
 if ($statusFilter !== 'all') {
-    $where[] = 'employment_status = ?';
+    $where[] = 'e.employment_status = ?';
     $params[] = $statusFilter;
 }
 if ($search !== '') {
-    $where[] = '(full_name LIKE ? OR job_title LIKE ? OR email LIKE ? OR phone LIKE ?)';
+    $where[] = '(e.full_name LIKE ? OR e.job_title LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)';
     $term = '%' . $search . '%';
-    array_push($params, $term, $term, $term, $term);
+    array_push($params, $term, $term, $term, $term, $term, $term);
 }
-$sql = 'SELECT * FROM employees';
+$sql = 'SELECT e.*, u.role AS account_role,
+               COALESCE(e.email, u.email) AS display_email,
+               COALESCE(e.phone, u.phone) AS display_phone
+        FROM employees AS e
+        LEFT JOIN users AS u ON u.id = e.user_id';
 if ($where !== []) {
     $sql .= ' WHERE ' . implode(' AND ', $where);
 }
-$sql .= ' ORDER BY employment_status = \'employed\' DESC, full_name ASC';
+$sql .= ' ORDER BY e.employment_status = \'employed\' DESC, e.full_name ASC';
 $statement = $pdo->prepare($sql);
 $statement->execute($params);
 $employees = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -310,6 +383,8 @@ require_once __DIR__ . '/../includes/header.php';
                 'email' => '',
                 'hired_at' => date('Y-m-d'),
             ]);
+        $dateOfBirthValue = (string) ($formData['dob'] ?? $formData['date_of_birth'] ?? '');
+        $hireDateValue = (string) ($formData['hire_date'] ?? $formData['hired_at'] ?? date('Y-m-d'));
         ?>
         <section class="bg-white rounded-xl shadow p-5 sm:p-7 max-w-3xl">
             <h2 class="text-xl font-bold mb-5"><?= $view === 'edit' ? 'Edit employee' : 'Add employee' ?></h2>
@@ -331,11 +406,11 @@ require_once __DIR__ . '/../includes/header.php';
                 </label>
                 <label class="block">
                     <span class="form-label">Date of birth (used to calculate age)</span>
-                    <input class="form-input" name="date_of_birth" type="date" max="<?= date('Y-m-d', strtotime('-1 day')) ?>" required value="<?= $escape((string) ($formData['date_of_birth'] ?? '')) ?>">
+                    <input class="form-input" name="dob" type="date" max="<?= date('Y-m-d', strtotime('-1 day')) ?>" value="<?= $escape($dateOfBirthValue) ?>">
                 </label>
                 <label class="block">
                     <span class="form-label">Sex</span>
-                    <select class="form-input" name="sex" required>
+                    <select class="form-input" name="sex">
                         <option value="">Select…</option>
                         <?php foreach ($sexLabels as $value => $label): ?>
                             <option value="<?= $value ?>" <?= ($formData['sex'] ?? '') === $value ? 'selected' : '' ?>><?= $label ?></option>
@@ -344,10 +419,10 @@ require_once __DIR__ . '/../includes/header.php';
                 </label>
                 <label class="block">
                     <span class="form-label">Hire date</span>
-                    <input class="form-input" name="hired_at" type="date" max="<?= date('Y-m-d') ?>" required value="<?= $escape((string) ($formData['hired_at'] ?? date('Y-m-d'))) ?>">
+                    <input class="form-input" name="hire_date" type="date" max="<?= date('Y-m-d') ?>" required value="<?= $escape($hireDateValue) ?>">
                 </label>
                 <label class="block">
-                    <span class="form-label">Phone (optional)</span>
+                    <span class="form-label">Phone (required to create a login account)</span>
                     <input class="form-input" name="phone" type="tel" maxlength="40" value="<?= $escape((string) ($formData['phone'] ?? '')) ?>">
                 </label>
                 <label class="block">
@@ -403,22 +478,26 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm">
                     <thead><tr class="border-b text-gray-500">
-                        <th class="py-3 pr-4">Employee</th><th class="py-3 pr-4">Role</th><th class="py-3 pr-4">Age / sex</th><th class="py-3 pr-4">Monthly salary</th><th class="py-3 pr-4">Status</th><th class="py-3">Actions</th>
+                        <th class="py-3 pr-4">Full name</th><th class="py-3 pr-4">Role / job title</th><th class="py-3 pr-4">Age / sex</th><th class="py-3 pr-4">Monthly salary</th><th class="py-3 pr-4">Phone</th><th class="py-3 pr-4">Email</th><th class="py-3 pr-4">Status</th><th class="py-3">Actions</th>
                     </tr></thead>
                     <tbody>
                     <?php foreach ($employees as $row): ?>
                         <?php
-                        $age = (new DateTimeImmutable((string) $row['date_of_birth']))->diff(new DateTimeImmutable('today'))->y;
+                        $age = $row['date_of_birth'] !== null
+                            ? (new DateTimeImmutable((string) $row['date_of_birth']))->diff(new DateTimeImmutable('today'))->y
+                            : null;
                         $employed = $row['employment_status'] === 'employed';
                         ?>
                         <tr class="border-b last:border-0 align-top">
-                            <td class="py-4 pr-4">
-                                <div class="font-semibold"><?= $escape((string) $row['full_name']) ?></div>
-                                <div class="text-gray-500"><?= $escape((string) ($row['phone'] ?: $row['email'] ?: 'No contact details')) ?></div>
-                            </td>
+                            <td class="py-4 pr-4 font-semibold"><?= $escape((string) $row['full_name']) ?></td>
                             <td class="py-4 pr-4"><?= $escape((string) $row['job_title']) ?></td>
-                            <td class="py-4 pr-4"><?= $age ?> · <?= $escape($sexLabels[$row['sex']] ?? '—') ?></td>
+                            <td class="py-4 pr-4">
+                                <?= $age ?? '—' ?>
+                                · <?= $escape($sexLabels[$row['sex']] ?? '—') ?>
+                            </td>
                             <td class="py-4 pr-4 whitespace-nowrap">KES <?= number_format((float) $row['monthly_salary'], 2) ?></td>
+                            <td class="py-4 pr-4 whitespace-nowrap"><?= $escape((string) ($row['display_phone'] ?? '—')) ?></td>
+                            <td class="py-4 pr-4"><?= $escape((string) ($row['display_email'] ?? '—')) ?></td>
                             <td class="py-4 pr-4"><span class="badge <?= $employed ? 'badge-success' : 'badge-charcoal' ?>"><?= $employed ? 'Employed' : 'Terminated' ?></span></td>
                             <td class="py-4">
                                 <div class="flex flex-wrap gap-2">
@@ -434,7 +513,7 @@ require_once __DIR__ . '/../includes/header.php';
                             </td>
                         </tr>
                     <?php endforeach; ?>
-                    <?php if ($employees === []): ?><tr><td class="py-8 text-center text-gray-500" colspan="6">No employees match this filter. Add an employee to get started.</td></tr><?php endif; ?>
+                    <?php if ($employees === []): ?><tr><td class="py-8 text-center text-gray-500" colspan="8">No employees match this filter. Add an employee to get started.</td></tr><?php endif; ?>
                     </tbody>
                 </table>
             </div>

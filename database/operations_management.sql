@@ -5,17 +5,22 @@ CREATE TABLE IF NOT EXISTS employees (
     full_name        VARCHAR(120) NOT NULL,
     job_title        VARCHAR(120) NOT NULL,
     monthly_salary   DECIMAL(12, 2) NOT NULL,
-    date_of_birth    DATE NOT NULL,
-    sex              ENUM('female', 'male', 'other', 'prefer_not_to_say') NOT NULL,
+    date_of_birth    DATE NULL,
+    sex              ENUM('female', 'male', 'other', 'prefer_not_to_say') NULL,
     phone            VARCHAR(40) NULL,
     email            VARCHAR(180) NULL,
+    user_id          INT UNSIGNED NULL,
     hired_at         DATE NOT NULL,
     employment_status ENUM('employed', 'terminated') NOT NULL DEFAULT 'employed',
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_employees_status_name (employment_status, full_name),
-    KEY idx_employees_email (email)
+    KEY idx_employees_email (email),
+    UNIQUE KEY uq_employees_user_id (user_id),
+    CONSTRAINT fk_employees_user
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS employee_employment_events (
@@ -31,6 +36,26 @@ CREATE TABLE IF NOT EXISTS employee_employment_events (
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_employee_events_admin
         FOREIGN KEY (admin_user_id) REFERENCES admin_users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    attendant_id    INT UNSIGNED NOT NULL,
+    action_type     VARCHAR(80) NOT NULL,
+    action_payload  JSON NOT NULL,
+    status          ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+    admin_id        INT UNSIGNED NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at     TIMESTAMP NULL DEFAULT NULL,
+    PRIMARY KEY (id),
+    KEY idx_approval_requests_status_date (status, created_at),
+    KEY idx_approval_requests_attendant_date (attendant_id, created_at),
+    CONSTRAINT fk_approval_requests_attendant
+        FOREIGN KEY (attendant_id) REFERENCES users (id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_approval_requests_admin
+        FOREIGN KEY (admin_id) REFERENCES admin_users (id)
         ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

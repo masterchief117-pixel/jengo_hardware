@@ -27,6 +27,17 @@ $selfId = null;
 // ══════════════════════════════════════════════════════════════════════════
 const ROLES = ['customer', 'attendant', 'admin'];
 
+function admin_users_redirect(string $path, string $message = '', string $type = 'info'): never
+{
+    if ($message !== '') {
+        $_SESSION['flash_message'] = $message;
+        $_SESSION['flash_type'] = $type;
+    }
+
+    header('Location: ' . rtrim((string) env('APP_URL', ''), '/') . $path);
+    exit;
+}
+
 // Role badge helper
 function role_badge(string $role): string
 {
@@ -145,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $normPhone ?? $phone,
                     $passwordHash, $role,
                 ]);
-                redirect(
+                admin_users_redirect(
                     '/admin/users.php',
                     "User \"{$fullName}\" created successfully.",
                     'success'
@@ -172,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $role, $userId,
                     ]);
                 }
-                redirect(
+                admin_users_redirect(
                     '/admin/users.php',
                     "User \"{$fullName}\" updated.",
                     'success'
@@ -190,17 +201,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newRole = $_POST['new_role'] ?? '';
 
         if (!in_array($newRole, ROLES, true)) {
-            redirect('/admin/users.php', 'Invalid role.', 'error');
+            admin_users_redirect('/admin/users.php', 'Invalid role.', 'error');
         }
         if ($userId === $selfId) {
-            redirect('/admin/users.php', 'You cannot change your own role.', 'error');
+            admin_users_redirect('/admin/users.php', 'You cannot change your own role.', 'error');
         }
 
         $pdo->prepare(
             'UPDATE users SET role = ? WHERE id = ?'
         )->execute([$newRole, $userId]);
 
-        redirect(
+        admin_users_redirect(
             '/admin/users.php',
             "Role updated to \"{$newRole}\".",
             'success'
@@ -210,14 +221,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── TOGGLE ACTIVE ─────────────────────────────────────────────────────
     elseif ($action === 'toggle_active') {
         if ($userId === $selfId) {
-            redirect('/admin/users.php', 'You cannot deactivate your own account.', 'error');
+            admin_users_redirect('/admin/users.php', 'You cannot deactivate your own account.', 'error');
         }
         // Flip the current is_active value
         $pdo->prepare(
             'UPDATE users SET is_active = NOT is_active WHERE id = ?'
         )->execute([$userId]);
 
-        redirect('/admin/users.php', 'User status updated.', 'info');
+        admin_users_redirect('/admin/users.php', 'User status updated.', 'info');
     }
 
     // ── RESET PASSWORD ────────────────────────────────────────────────────
@@ -225,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newPass = trim($_POST['new_password'] ?? '');
 
         if (strlen($newPass) < 8) {
-            redirect('/admin/users.php', 'Password must be at least 8 characters.', 'error');
+            admin_users_redirect('/admin/users.php', 'Password must be at least 8 characters.', 'error');
         }
 
         $hash = password_hash($newPass, PASSWORD_BCRYPT, ['cost' => 12]);
@@ -233,11 +244,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'UPDATE users SET password_hash = ? WHERE id = ?'
         )->execute([$hash, $userId]);
 
-        redirect('/admin/users.php', 'Password reset successfully.', 'success');
+        admin_users_redirect('/admin/users.php', 'Password reset successfully.', 'success');
     }
 
     else {
-        redirect('/admin/users.php', 'Unknown action.', 'error');
+        admin_users_redirect('/admin/users.php', 'Unknown action.', 'error');
     }
 }
 
@@ -256,7 +267,7 @@ if ($view === 'edit' && $editId > 0) {
     $s->execute([$editId]);
     $editUser = $s->fetch();
     if (!$editUser) {
-        redirect('/admin/users.php', 'User not found.', 'error');
+        admin_users_redirect('/admin/users.php', 'User not found.', 'error');
     }
 }
 
@@ -648,7 +659,7 @@ function admin_sidebar(string $base): void
     <div class="flex flex-col sm:flex-row sm:items-center
                 sm:justify-between gap-3 mb-6">
         <h1 class="text-2xl font-extrabold text-gray-900">Users</h1>
-        <a href="<?= $base ?>/admin/users.php?view=add"
+        <a href="<?= $base ?>/admin/add_user.php"
            class="btn btn-primary btn-sm">+ Add User</a>
     </div>
 
