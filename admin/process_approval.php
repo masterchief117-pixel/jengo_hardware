@@ -122,8 +122,11 @@ try {
 
     $detail = 'Approval request rejected.';
     $status = 'rejected';
+    $receiptSaleId = null;
     if ($decision === 'approve') {
-        $detail = 'Approved. ' . execute_approval_payload($pdo, $pending);
+        $result = execute_approval_payload($pdo, $pending);
+        $detail = 'Approved. ' . $result['message'];
+        $receiptSaleId = $result['sale_id'];
         $status = 'approved';
     }
 
@@ -138,6 +141,11 @@ try {
     }
 
     $pdo->commit();
+    if ($receiptSaleId !== null) {
+        header('Location: ' . $base . '/receipt.php?sale_id=' . $receiptSaleId . '&admin=1');
+        exit;
+    }
+
     $_SESSION['flash_message'] = $detail;
     $_SESSION['flash_type'] = 'success';
 } catch (Throwable $exception) {

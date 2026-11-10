@@ -123,6 +123,7 @@ $flash = get_flash();
                    class="text-sm transition-colors duration-150 <?= nav_active($base . '/shop.php') ?>"
                    role="menuitem">Shop</a>
 
+                <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
                 <!-- Cart with badge -->
                 <a href="<?= $base ?>/cart.php"
                    class="relative text-sm transition-colors duration-150 <?= nav_active($base . '/cart.php') ?>"
@@ -149,6 +150,7 @@ $flash = get_flash();
                     </span>
                     <?php endif; ?>
                 </a>
+                <?php endif; ?>
 
                 <!-- ── Auth / role links ── -->
                 <?php if (is_logged_in()): ?>
@@ -253,6 +255,7 @@ $flash = get_flash();
 
             <!-- ── Mobile: cart icon + hamburger ────────────────────── -->
             <div class="flex md:hidden items-center gap-3">
+                <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
                 <!-- Mobile cart -->
                 <a href="<?= $base ?>/cart.php"
                    class="relative text-gray-200 hover:text-yellow-400"
@@ -273,6 +276,7 @@ $flash = get_flash();
                     </span>
                     <?php endif; ?>
                 </a>
+                <?php endif; ?>
 
                 <!-- Hamburger button -->
                 <button id="mobile-menu-btn"

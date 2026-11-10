@@ -20,6 +20,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ]);
 }
 
+if (has_any_role(['admin', 'attendant', 'employee'])) {
+    respond_with_json(403, [
+        'success' => false,
+        'message' => 'Staff accounts cannot add products to the customer cart.',
+    ]);
+}
+
 $payload = json_decode(file_get_contents('php://input'), true);
 if (!is_array($payload)) {
     respond_with_json(400, [

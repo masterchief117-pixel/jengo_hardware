@@ -347,7 +347,12 @@ require_once __DIR__ . '/includes/header.php';
 
             <!-- Footer -->
             <div class="card-footer pt-0 px-4 pb-4">
-                <?php if ((int)$product['stock_qty'] > 0): ?>
+                <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                <button type="button" disabled
+                        class="btn btn-secondary btn-sm btn-block cursor-not-allowed">
+                    Staff View
+                </button>
+                <?php elseif ((int)$product['stock_qty'] > 0): ?>
                 <a href="<?= $base ?>/shop.php?product=<?= (int)$product['id'] ?>"
                    class="btn btn-primary btn-sm btn-block">
                     Add to Cart

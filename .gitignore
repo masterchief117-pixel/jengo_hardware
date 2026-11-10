@@ -1,1 +1,27 @@
+# Environment and local secrets
 .env
+.env.*
+!.env.example
+!**/.env.example
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs
+*.log
+error_log
+
+# User-uploaded files
+/uploads/
+**/uploads/
+
+# Dependencies
+/vendor/
+**/vendor/
+/node_modules/
+**/node_modules/

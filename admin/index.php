@@ -17,6 +17,21 @@ require_admin_login();
 $pdo = db();
 
 // ══════════════════════════════════════════════════════════════════════════
+// POS SALES & APPROVAL KPIs
+// ══════════════════════════════════════════════════════════════════════════
+$todaysSalesStmt = $pdo->query(
+    "SELECT COALESCE(SUM(total_amount), 0) AS todays_sales
+     FROM sales
+     WHERE DATE(created_at) = CURDATE() AND status != 'Voided'"
+);
+$todaysSales = (float) $todaysSalesStmt->fetchColumn();
+
+$pendingCountStmt = $pdo->query(
+    "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'"
+);
+$pendingCount = (int) $pendingCountStmt->fetchColumn();
+
+// ══════════════════════════════════════════════════════════════════════════
 // 1. REVENUE & ORDER KPIs
 // ══════════════════════════════════════════════════════════════════════════
 $kpiStmt = $pdo->query(
@@ -119,7 +134,7 @@ $lowStockStmt = $pdo->query(
      FROM products
      WHERE stock_qty <= 10
      ORDER BY stock_qty ASC
-     LIMIT 5"
+     LIMIT 10"
 );
 $lowStockProducts = $lowStockStmt->fetchAll();
 
@@ -267,6 +282,10 @@ require_once __DIR__ . '/../includes/header.php';
                 </p>
             </div>
             <div class="flex items-center gap-2">
+                <a href="<?= $base ?>/customers.php"
+                   class="btn btn-secondary btn-sm">
+                    Customers
+                </a>
                 <a href="<?= $base ?>/admin/products.php?action=add"
                    class="btn btn-primary btn-sm">
                     + Add Product
@@ -282,7 +301,29 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
 
-        <section class="mb-8 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm"
+        <section class="mb-8 grid gap-4 sm:grid-cols-2" aria-label="Today's POS overview">
+            <article class="rounded-2xl border border-gray-100 border-l-4 border-l-orange-500 bg-white p-5 shadow-sm">
+                <p class="text-sm font-semibold text-gray-500">Today's Sales</p>
+                <p class="mt-2 text-3xl font-extrabold text-gray-900">
+                    KES <?= number_format($todaysSales, 2) ?>
+                </p>
+            </article>
+            <a id="action-required-card" href="#pending-approvals"
+               class="rounded-2xl border border-l-4 p-5 shadow-sm transition hover:shadow-md <?= $pendingCount > 0 ? 'border-red-200 border-l-red-500 bg-red-50' : 'border-green-200 border-l-green-500 bg-green-50' ?>"
+               aria-label="<?= $pendingCount ?> pending approval<?= $pendingCount === 1 ? '' : 's' ?>; go to pending approvals">
+                <p class="text-sm font-semibold <?= $pendingCount > 0 ? 'text-red-700' : 'text-green-700' ?>">
+                    Action Required
+                </p>
+                <p class="mt-2 text-3xl font-extrabold <?= $pendingCount > 0 ? 'text-red-800' : 'text-green-800' ?>">
+                    <?= number_format($pendingCount) ?>
+                </p>
+                <p class="mt-1 text-sm <?= $pendingCount > 0 ? 'text-red-700' : 'text-green-700' ?>">
+                    Pending approval<?= $pendingCount === 1 ? '' : 's' ?> · View requests
+                </p>
+            </a>
+        </section>
+
+        <section id="pending-approvals" class="mb-8 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm"
                  aria-labelledby="pending-approvals-heading">
             <div class="mb-4 flex items-center justify-between gap-3">
                 <div>
@@ -363,7 +404,7 @@ require_once __DIR__ . '/../includes/header.php';
                  aria-labelledby="low-stock-heading">
             <div class="mb-4 flex items-center justify-between gap-3">
                 <h2 id="low-stock-heading" class="text-lg font-bold text-gray-900">
-                    Low Stock Alerts
+                    Low Stock Warnings
                 </h2>
                 <a href="<?= $base ?>/admin/products.php"
                    class="text-xs font-semibold text-orange hover:underline">
@@ -372,7 +413,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
             <?php if ($lowStockProducts === []): ?>
                 <p class="rounded-lg bg-green-50 px-4 py-6 text-center text-sm text-green-700">
-                    All stock levels look good!
+                    All inventory levels are healthy.
                 </p>
             <?php else: ?>
                 <div class="overflow-x-auto">

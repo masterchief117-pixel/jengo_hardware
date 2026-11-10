@@ -120,10 +120,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── SAVE (add or edit) ────────────────────────────────────────────────
     if ($action === 'save') {
         $id          = (int) ($_POST['product_id'] ?? 0);   // 0 = new
-        $categoryInput = $_POST['category_id'] ?? '';
-        $categoryId = is_string($categoryInput) || is_int($categoryInput)
+        $categoryInput = $_POST['category_id'] ?? null;
+        $validatedCategoryId = is_string($categoryInput) || is_int($categoryInput)
             ? filter_var($categoryInput, FILTER_VALIDATE_INT)
             : false;
+        $categoryId = is_int($validatedCategoryId) && $validatedCategoryId > 0
+            ? $validatedCategoryId
+            : null;
         $name        = trim($_POST['name']        ?? '');
         $description = trim($_POST['description'] ?? '');
         $sku         = trim($_POST['sku']          ?? '');
@@ -139,8 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($price <= 0)          $errors['price'] = 'Price must be greater than zero.';
         if ($stockQty < 0)        $errors['stock_qty'] = 'Stock cannot be negative.';
         if ($threshold < 0)       $threshold = 0;
-        if ($categoryId === false || $categoryId < 1) {
-            $categoryId = null;
+        if ($categoryId === null) {
             $errors['category_id'] = 'Please select a valid category.';
         } else {
             $categoryCheck = $pdo->prepare('SELECT id FROM categories WHERE id = ? LIMIT 1');
@@ -172,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                  :price, :cost_price, :stock_qty, :low_stock_threshold, :is_active)'
                     );
                     $stmt->execute([
-                        'category_id' => $categoryId,
+                        ':category_id' => $categoryId,
                         'name' => $name,
                         'slug' => $slug,
                         'description' => $description ?: null,
@@ -446,7 +448,7 @@ function render_product_form(
                                 required>
                             <option value="">-- Select a category --</option>
                             <?php foreach ($cats as $cat): ?>
-                            <option value="<?= (int) $cat['id'] ?>"
+                            <option value="<?= htmlspecialchars((string) $cat['id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
                                 <?= (int)$v('category_id', 0) === (int)$cat['id'] ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($cat['name']) ?>
                             </option>

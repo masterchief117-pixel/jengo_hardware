@@ -123,6 +123,22 @@ $escape = static fn (string $value): string =>
     htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $money = static fn (float $value): string =>
     'KES ' . number_format($value, 2);
+$currencies = [
+    'KES' => 'Kenyan Shilling',
+    'USD' => 'US Dollar',
+    'EUR' => 'Euro',
+    'GBP' => 'British Pound',
+    'UGX' => 'Ugandan Shilling',
+    'TZS' => 'Tanzanian Shilling',
+    'RWF' => 'Rwandan Franc',
+    'ZAR' => 'South African Rand',
+    'INR' => 'Indian Rupee',
+    'CNY' => 'Chinese Yuan',
+    'AED' => 'UAE Dirham',
+    'CAD' => 'Canadian Dollar',
+    'AUD' => 'Australian Dollar',
+    'JPY' => 'Japanese Yen',
+];
 
 $chartJsonFlags = JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT;
 $salesTrendLabelsJson = json_encode(
@@ -317,6 +333,67 @@ require_once __DIR__ . '/../includes/header.php';
                         </button>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <section class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-8"
+                 aria-labelledby="currency-converter-title">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
+                <div>
+                    <h2 id="currency-converter-title" class="text-lg font-bold text-gray-900">
+                        Currency Converter
+                    </h2>
+                    <p class="text-sm text-gray-500 mt-1">
+                        Convert amounts using the latest available exchange rates. Rates are estimates and may differ from your provider.
+                    </p>
+                </div>
+                <button id="currency-refresh" type="button"
+                        class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        aria-describedby="currency-rate-status">
+                    Refresh rates
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <label class="block text-sm font-medium text-gray-700" for="currency-amount">
+                    Amount
+                    <input id="currency-amount" type="number" min="0" step="any"
+                           inputmode="decimal" value="1"
+                           class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-orange focus:outline-none focus:ring-2 focus:ring-orange/20">
+                </label>
+                <label class="block text-sm font-medium text-gray-700">
+                    From
+                    <select id="currency-from"
+                            class="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-orange focus:outline-none focus:ring-2 focus:ring-orange/20">
+                        <?php foreach ($currencies as $code => $name): ?>
+                        <option value="<?= $escape($code) ?>"><?= $escape($code . ' — ' . $name) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <div class="flex items-center justify-center">
+                    <button id="currency-swap" type="button"
+                            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                            aria-label="Swap currencies">
+                        Swap
+                    </button>
+                </div>
+                <label class="block text-sm font-medium text-gray-700">
+                    To
+                    <select id="currency-to"
+                            class="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-orange focus:outline-none focus:ring-2 focus:ring-orange/20">
+                        <?php foreach ($currencies as $code => $name): ?>
+                        <option value="<?= $escape($code) ?>" <?= $code === 'USD' ? 'selected' : '' ?>><?= $escape($code . ' — ' . $name) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            </div>
+            <div class="mt-5 rounded-lg bg-orange-50 p-4">
+                <p class="text-xs font-medium text-gray-600">Converted amount</p>
+                <p id="currency-result" class="mt-1 text-2xl font-bold text-gray-900" aria-live="polite">
+                    Loading exchange rates…
+                </p>
+                <p id="currency-rate-status" class="mt-2 text-xs text-gray-600" role="status" aria-live="polite">
+                    Fetching the latest rates…
+                </p>
             </div>
         </section>
 
@@ -539,6 +616,105 @@ document.addEventListener('DOMContentLoaded', function () {
         input.addEventListener('input', updateMargin);
     });
     updateMargin();
+
+    const currencyAmount = document.getElementById('currency-amount');
+    const currencyFrom = document.getElementById('currency-from');
+    const currencyTo = document.getElementById('currency-to');
+    const currencyResult = document.getElementById('currency-result');
+    const currencyRateStatus = document.getElementById('currency-rate-status');
+    const currencyRefresh = document.getElementById('currency-refresh');
+    const currencySwap = document.getElementById('currency-swap');
+    let currencyRates = null;
+    let currencyRateUpdatedAt = '';
+
+    const updateCurrencyConversion = function () {
+        if (!currencyRates) {
+            return;
+        }
+
+        const amountText = currencyAmount.value.trim();
+        const amount = Number(amountText);
+        const from = currencyFrom.value;
+        const to = currencyTo.value;
+        const fromRate = currencyRates[from];
+        const toRate = currencyRates[to];
+
+        if (amountText === '' || !Number.isFinite(amount) || amount < 0) {
+            currencyResult.textContent = 'Enter a valid non-negative amount.';
+            return;
+        }
+        if (!Number.isFinite(fromRate) || fromRate <= 0 ||
+            !Number.isFinite(toRate) || toRate <= 0) {
+            currencyResult.textContent = 'Rate unavailable for the selected currency.';
+            return;
+        }
+
+        const convertedAmount = amount * (toRate / fromRate);
+        if (!Number.isFinite(convertedAmount)) {
+            currencyResult.textContent = 'Amount is too large to convert.';
+            return;
+        }
+
+        const formattedAmount = new Intl.NumberFormat('en', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(convertedAmount);
+        currencyResult.textContent = formattedAmount + ' ' + to;
+    };
+
+    const loadCurrencyRates = async function () {
+        currencyRefresh.disabled = true;
+        currencyRateStatus.classList.remove('text-red-700');
+        currencyRateStatus.textContent = 'Fetching the latest rates…';
+
+        try {
+            const response = await fetch('https://open.er-api.com/v6/latest/KES', {
+                headers: { Accept: 'application/json' }
+            });
+            if (!response.ok) {
+                throw new Error('Exchange-rate service returned HTTP ' + response.status + '.');
+            }
+
+            const data = await response.json();
+            if (data.result !== 'success' || !data.rates || typeof data.rates !== 'object') {
+                throw new Error('Exchange-rate service returned an invalid response.');
+            }
+
+            currencyRates = data.rates;
+            const updatedAt = new Date(data.time_last_update_utc);
+            currencyRateUpdatedAt = Number.isNaN(updatedAt.getTime())
+                ? ''
+                : updatedAt.toLocaleString();
+            currencyRateStatus.textContent = currencyRateUpdatedAt
+                ? 'Rates last updated ' + currencyRateUpdatedAt + '. Source: open.er-api.com.'
+                : 'Rates loaded. Source: open.er-api.com.';
+            updateCurrencyConversion();
+        } catch {
+            currencyRateStatus.classList.add('text-red-700');
+            currencyRateStatus.textContent = currencyRates
+                ? 'Could not refresh rates. Showing the previously loaded rates' +
+                    (currencyRateUpdatedAt ? ' from ' + currencyRateUpdatedAt : '') + '.'
+                : 'Exchange rates could not be loaded. Check your connection and try again.';
+            if (!currencyRates) {
+                currencyResult.textContent = 'Conversion unavailable until rates load.';
+            }
+        } finally {
+            currencyRefresh.disabled = false;
+        }
+    };
+
+    [currencyAmount, currencyFrom, currencyTo].forEach(function (control) {
+        control.addEventListener('input', updateCurrencyConversion);
+        control.addEventListener('change', updateCurrencyConversion);
+    });
+    currencySwap.addEventListener('click', function () {
+        const previousFrom = currencyFrom.value;
+        currencyFrom.value = currencyTo.value;
+        currencyTo.value = previousFrom;
+        updateCurrencyConversion();
+    });
+    currencyRefresh.addEventListener('click', loadCurrencyRates);
+    loadCurrencyRates();
 
     const calculatorDisplay = document.getElementById('basic-calculator-display');
     let storedValue = null;

@@ -22,6 +22,8 @@ $approvalCsrfToken = (string) $_SESSION['attendant_approval_csrf'];
 $pdo = db();
 ensure_pos_schema($pdo);
 $attendantId = (int) get_user_id();
+$customersStatement = $pdo->query('SELECT id, name, company_name, phone FROM customers ORDER BY name ASC');
+$customers = $customersStatement->fetchAll(PDO::FETCH_ASSOC);
 
 if (!isset($_SESSION['pos_cart']) || !is_array($_SESSION['pos_cart'])) {
     $_SESSION['pos_cart'] = [];
@@ -118,12 +120,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'checkout') {
+            $rawCustomerId = $_POST['customer_id'] ?? '';
+            $customerId = null;
+            if ($rawCustomerId !== '') {
+                if (!is_string($rawCustomerId) && !is_int($rawCustomerId)) {
+                    throw new InvalidArgumentException('Select a valid customer or choose Walk-in Customer.');
+                }
+                $validatedCustomerId = filter_var($rawCustomerId, FILTER_VALIDATE_INT);
+                if ($validatedCustomerId === false || $validatedCustomerId < 1) {
+                    throw new InvalidArgumentException('Select a valid customer or choose Walk-in Customer.');
+                }
+                $customerId = $validatedCustomerId;
+            }
+
             $sale = normalize_sale_payload(
                 $pdo,
                 array_values($_SESSION['pos_cart']),
                 (float) ($_POST['discount_percent'] ?? 0),
                 (string) ($_POST['customer_name'] ?? ''),
-                (string) ($_POST['payment_method'] ?? 'cash')
+                (string) ($_POST['payment_method'] ?? 'cash'),
+                $customerId
             );
 
             if (pos_sale_needs_approval($sale)) {
@@ -132,13 +148,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 redirect('/attendant/pos.php', APPROVAL_SUCCESS_MESSAGE, 'info');
             }
 
-            $saleNumber = record_pos_sale($pdo, $attendantId, $sale);
+            $recordedSale = record_pos_sale($pdo, $attendantId, $sale);
             $_SESSION['pos_cart'] = [];
-            redirect(
-                '/attendant/pos.php',
-                'Sale ' . $saleNumber . ' completed for KES ' . number_format((float) $sale['total'], 2) . '.',
-                'success'
-            );
+            redirect('/receipt.php?sale_id=' . $recordedSale['id']);
         }
 
         redirect('/attendant/pos.php', 'Unknown action.', 'error');
@@ -179,11 +191,15 @@ $pageTitle = 'Point of Sale';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<div class="mb-6">
-    <h1 class="text-2xl font-extrabold text-gray-900">Point of Sale</h1>
-    <p class="mt-1 text-sm text-gray-500">
-        Ring up a walk-in sale. Discounts above 5% or KES 1,000, and any lowered unit price, are sent to an admin instead of completing.
-    </p>
+<div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+        <h1 class="text-2xl font-extrabold text-gray-900">Point of Sale</h1>
+        <p class="mt-1 text-sm text-gray-500">
+            Ring up a walk-in sale. Discounts above 5% or KES 1,000, and any lowered unit price, are sent to an admin instead of completing.
+        </p>
+    </div>
+    <a href="<?= htmlspecialchars(rtrim((string) env('APP_URL', ''), '/') . '/customers.php', ENT_QUOTES, 'UTF-8') ?>"
+       class="btn btn-secondary btn-sm">Manage Customers</a>
 </div>
 
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -250,6 +266,13 @@ require_once __DIR__ . '/../includes/header.php';
             <?php endif; ?>
         </div>
 
+        <label for="barcode-scanner" class="sr-only">Scan barcode or search for a product</label>
+        <input type="text" id="barcode-scanner"
+               class="form-input mt-4 w-full border-2 border-orange-400 px-4 py-4 text-lg font-semibold"
+               placeholder="Scan Barcode or Type SKU/Name..."
+               autocomplete="off" autofocus>
+        <p id="barcode-scan-message" class="mt-2 hidden text-sm" role="status" aria-live="polite"></p>
+
         <?php if ($_SESSION['pos_cart'] === []): ?>
             <p class="mt-4 rounded-lg bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
                 The cart is empty. Add a product to start a sale.
@@ -309,8 +332,21 @@ require_once __DIR__ . '/../includes/header.php';
 
                 <div class="grid gap-3 sm:grid-cols-3">
                     <label>
-                        <span class="form-label">Customer</span>
-                        <input type="text" name="customer_name" maxlength="120" class="form-input" placeholder="Walk-in">
+                        <span class="form-label">Select Customer</span>
+                        <select name="customer_id" class="form-input">
+                            <option value="">Walk-in Customer</option>
+                            <?php foreach ($customers as $customer): ?>
+                                <?php
+                                $customerLabel = (string) $customer['name'];
+                                if (!empty($customer['company_name'])) {
+                                    $customerLabel .= ' - ' . $customer['company_name'];
+                                }
+                                ?>
+                                <option value="<?= (int) $customer['id'] ?>">
+                                    <?= htmlspecialchars($customerLabel, ENT_QUOTES, 'UTF-8') ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </label>
                     <label>
                         <span class="form-label">Payment</span>
@@ -349,5 +385,64 @@ require_once __DIR__ . '/../includes/header.php';
         <?php endif; ?>
     </section>
 </div>
+
+<script>
+(() => {
+    const scanner = document.getElementById('barcode-scanner');
+    const message = document.getElementById('barcode-scan-message');
+    let requestPending = false;
+    let messageTimer;
+
+    function showScanMessage(text, isError) {
+        message.textContent = text;
+        message.className = `mt-2 text-sm ${isError ? 'text-red-600' : 'text-green-700'}`;
+        window.clearTimeout(messageTimer);
+        messageTimer = window.setTimeout(() => {
+            message.textContent = '';
+            message.className = 'mt-2 hidden text-sm';
+        }, 2500);
+    }
+
+    scanner.addEventListener('keydown', async (event) => {
+        if (event.key !== 'Enter') {
+            return;
+        }
+
+        event.preventDefault();
+        const lookup = scanner.value.trim();
+        if (!lookup || requestPending) {
+            return;
+        }
+
+        scanner.value = '';
+        requestPending = true;
+        scanner.disabled = true;
+
+        try {
+            const response = await fetch('api_scan_product.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRF-Token': <?= json_encode($approvalCsrfToken) ?>
+                },
+                body: new URLSearchParams({ sku: lookup })
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || 'Product not found.');
+            }
+
+            showScanMessage(`${result.product.name} added to cart.`, false);
+            window.location.reload();
+        } catch (error) {
+            showScanMessage(error instanceof Error ? error.message : 'Product not found.', true);
+            scanner.focus();
+        } finally {
+            requestPending = false;
+            scanner.disabled = false;
+        }
+    });
+})();
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

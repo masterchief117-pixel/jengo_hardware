@@ -305,10 +305,23 @@ CREATE TABLE IF NOT EXISTS payments (
 -- TABLE: sales
 -- In-store POS tickets. status is 'completed' until an approved void sets 'Voided'.
 -- =============================================================================
+CREATE TABLE IF NOT EXISTS customers (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name         VARCHAR(120) NOT NULL,
+    phone        VARCHAR(40) NOT NULL,
+    company_name VARCHAR(160) NULL,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    KEY idx_customers_name (name),
+    KEY idx_customers_phone (phone)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sales (
     id               INT UNSIGNED   NOT NULL AUTO_INCREMENT,
     sale_number      VARCHAR(30)    NOT NULL,
     attendant_id     INT UNSIGNED   NOT NULL,
+    customer_id      INT UNSIGNED       NULL,
     customer_name    VARCHAR(120)       NULL,
     subtotal         DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     discount_percent DECIMAL(6, 2)  NOT NULL DEFAULT 0.00,
@@ -322,6 +335,7 @@ CREATE TABLE IF NOT EXISTS sales (
     PRIMARY KEY (id),
     UNIQUE KEY uq_sales_number (sale_number),
     KEY idx_sales_attendant_date (attendant_id, created_at),
+    KEY idx_sales_customer (customer_id),
     CONSTRAINT fk_sales_attendant
         FOREIGN KEY (attendant_id) REFERENCES users (id)
         ON UPDATE CASCADE

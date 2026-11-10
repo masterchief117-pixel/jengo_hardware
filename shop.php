@@ -27,7 +27,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     $response  = ['success' => false, 'message' => '', 'cart_count' => 0];
 
-    if ($productId < 1) {
+    if (has_any_role(['admin', 'attendant', 'employee'])) {
+        $response['message'] = 'Staff accounts cannot add products to the customer cart.';
+    } elseif ($productId < 1) {
         $response['message'] = 'Invalid product.';
     } else {
         // Verify product exists and has stock
@@ -63,6 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     if ($isAjax) {
+        if (has_any_role(['admin', 'attendant', 'employee'])) {
+            http_response_code(403);
+        }
         header('Content-Type: application/json');
         echo json_encode($response);
         exit;
@@ -427,7 +432,11 @@ require_once __DIR__ . '/includes/header.php';
 
                 <!-- Footer: Add to Cart -->
                 <div class="px-4 pb-4">
-                    <?php if ($inStock): ?>
+                    <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                    <button type="button" disabled
+                            class="btn btn-secondary btn-sm btn-block cursor-not-allowed"
+                            aria-disabled="true">Staff View</button>
+                    <?php elseif ($inStock): ?>
                     <form method="POST" action="shop.php"
                           class="add-to-cart-form"
                           data-product-id="<?= $product['id'] ?>"

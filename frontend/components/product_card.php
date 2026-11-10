@@ -56,6 +56,13 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
                     <span class="text-sm font-medium text-gray-500">Price unavailable</span>
                 <?php endif; ?>
             </p>
+            <?php if (in_array($_SESSION['user_role'] ?? null, ['admin', 'attendant', 'employee'], true)): ?>
+            <button type="button" disabled
+                    class="jengo-hover-transition mt-4 inline-flex w-full items-center justify-center rounded-lg border border-gray-300 px-4 py-3 text-sm font-bold text-gray-600"
+                    aria-disabled="true">
+                Staff View
+            </button>
+            <?php else: ?>
             <button type="button"
                     class="jengo-hover-transition mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-bold text-white hover:brightness-90 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300"
                     style="<?= $canAddToCart ? 'background-color: var(--jengo-safety-orange);' : '' ?>"
@@ -70,6 +77,7 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
                     Out of Stock
                 <?php endif; ?>
             </button>
+            <?php endif; ?>
         </div>
     </div>
 </article>

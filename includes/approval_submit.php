@@ -99,7 +99,10 @@ function assert_approval_payload(PDO $pdo, int $attendantId, string $actionType,
             is_array($payload['items'] ?? null) ? $payload['items'] : [],
             (float) ($payload['discount_percent'] ?? 0),
             (string) ($payload['customer_name'] ?? ''),
-            (string) ($payload['payment_method'] ?? 'cash')
+            (string) ($payload['payment_method'] ?? 'cash'),
+            isset($payload['customer_id']) && (int) $payload['customer_id'] > 0
+                ? (int) $payload['customer_id']
+                : null
         );
         if (!pos_sale_needs_approval($sale)) {
             throw new InvalidArgumentException('This discount is within your limit. Complete it from POS checkout.');

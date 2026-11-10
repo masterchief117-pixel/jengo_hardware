@@ -24,10 +24,24 @@ function ensure_pos_schema(PDO $pdo): void
     }
 
     $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS customers (
+            id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name         VARCHAR(120) NOT NULL,
+            phone        VARCHAR(40) NOT NULL,
+            company_name VARCHAR(160) NULL,
+            created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_customers_name (name),
+            KEY idx_customers_phone (phone)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
         "CREATE TABLE IF NOT EXISTS sales (
             id               INT UNSIGNED   NOT NULL AUTO_INCREMENT,
             sale_number      VARCHAR(30)    NOT NULL,
             attendant_id     INT UNSIGNED   NOT NULL,
+            customer_id      INT UNSIGNED       NULL,
             customer_name    VARCHAR(120)       NULL,
             subtotal         DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
             discount_percent DECIMAL(6, 2)  NOT NULL DEFAULT 0.00,
@@ -40,11 +54,17 @@ function ensure_pos_schema(PDO $pdo): void
             PRIMARY KEY (id),
             UNIQUE KEY uq_sales_number (sale_number),
             KEY idx_sales_attendant_date (attendant_id, created_at),
+            KEY idx_sales_customer (customer_id),
             CONSTRAINT fk_sales_attendant
                 FOREIGN KEY (attendant_id) REFERENCES users (id)
                 ON UPDATE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+
+    $customerColumn = $pdo->query("SHOW COLUMNS FROM sales LIKE 'customer_id'")->fetch();
+    if ($customerColumn === false) {
+        $pdo->exec('ALTER TABLE sales ADD COLUMN customer_id INT UNSIGNED NULL AFTER attendant_id');
+    }
 
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS sale_items (
@@ -148,7 +168,14 @@ function pos_sale_needs_approval(array $sale): bool
  * @param list<array<string, mixed>> $items
  * @return array<string, mixed>
  */
-function normalize_sale_payload(PDO $pdo, array $items, float $discountPercent, string $customerName, string $paymentMethod): array
+function normalize_sale_payload(
+    PDO $pdo,
+    array $items,
+    float $discountPercent,
+    string $customerName,
+    string $paymentMethod,
+    ?int $customerId = null
+): array
 {
     if ($items === []) {
         throw new InvalidArgumentException('Add at least one product before checkout.');
@@ -158,6 +185,17 @@ function normalize_sale_payload(PDO $pdo, array $items, float $discountPercent, 
     }
     if (!in_array($paymentMethod, ['cash', 'mpesa', 'card'], true)) {
         throw new InvalidArgumentException('Choose cash, M-Pesa, or card.');
+    }
+    if ($customerId !== null) {
+        $customerStatement = $pdo->prepare('SELECT name FROM customers WHERE id = ? LIMIT 1');
+        $customerStatement->execute([$customerId]);
+        $registeredCustomerName = $customerStatement->fetchColumn();
+        if ($registeredCustomerName === false) {
+            throw new InvalidArgumentException('Select a valid customer or choose Walk-in Customer.');
+        }
+        if (trim($customerName) === '') {
+            $customerName = (string) $registeredCustomerName;
+        }
     }
 
     $normalized = [];
@@ -214,6 +252,7 @@ function normalize_sale_payload(PDO $pdo, array $items, float $discountPercent, 
     }
 
     return [
+        'customer_id' => $customerId,
         'customer_name' => mb_substr(trim($customerName), 0, 120),
         'payment_method' => $paymentMethod,
         'discount_percent' => round($discountPercent, 2),
@@ -229,15 +268,19 @@ function normalize_sale_payload(PDO $pdo, array $items, float $discountPercent, 
  * Insert a completed POS sale and reduce shelf stock.
  *
  * @param array<string, mixed> $sale
+ * @return array{id: int, sale_number: string}
  */
-function record_pos_sale(PDO $pdo, int $attendantId, array $sale): string
+function record_pos_sale(PDO $pdo, int $attendantId, array $sale): array
 {
     $sale = normalize_sale_payload(
         $pdo,
         is_array($sale['items'] ?? null) ? $sale['items'] : [],
         (float) ($sale['discount_percent'] ?? 0),
         (string) ($sale['customer_name'] ?? ''),
-        (string) ($sale['payment_method'] ?? 'cash')
+        (string) ($sale['payment_method'] ?? 'cash'),
+        isset($sale['customer_id']) && (int) $sale['customer_id'] > 0
+            ? (int) $sale['customer_id']
+            : null
     );
 
     $ownsTransaction = !$pdo->inTransaction();
@@ -249,13 +292,14 @@ function record_pos_sale(PDO $pdo, int $attendantId, array $sale): string
         $saleNumber = pos_reference('POS-');
         $insert = $pdo->prepare(
             'INSERT INTO sales
-                (sale_number, attendant_id, customer_name, subtotal, discount_percent,
+                (sale_number, attendant_id, customer_id, customer_name, subtotal, discount_percent,
                  discount_amount, total_amount, payment_method, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, \'completed\')'
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, \'completed\')'
         );
         $insert->execute([
             $saleNumber,
             $attendantId,
+            $sale['customer_id'],
             $sale['customer_name'] !== '' ? $sale['customer_name'] : null,
             $sale['subtotal'],
             $sale['discount_percent'],
@@ -297,7 +341,7 @@ function record_pos_sale(PDO $pdo, int $attendantId, array $sale): string
             $pdo->commit();
         }
 
-        return $saleNumber;
+        return ['id' => $saleId, 'sale_number' => $saleNumber];
     } catch (Throwable $exception) {
         if ($ownsTransaction && $pdo->inTransaction()) {
             $pdo->rollBack();
@@ -478,8 +522,9 @@ function save_quote_from_payload(PDO $pdo, int $attendantId, array $payload, str
  * Carry out an approved attendant request. Unknown types are recorded only.
  *
  * @param array<string, mixed> $request
+ * @return array{message: string, sale_id: int|null}
  */
-function execute_approval_payload(PDO $pdo, array $request): string
+function execute_approval_payload(PDO $pdo, array $request): array
 {
     ensure_pos_schema($pdo);
     $payload = json_decode((string) ($request['action_payload'] ?? ''), true);
@@ -490,11 +535,26 @@ function execute_approval_payload(PDO $pdo, array $request): string
     $attendantId = (int) $request['attendant_id'];
     $actionType = (string) $request['action_type'];
 
-    return match ($actionType) {
-        'stock_adjustment' => apply_stock_adjustment($pdo, $payload),
-        'high_discount' => 'Sale ' . record_pos_sale($pdo, $attendantId, $payload) . ' completed.',
-        'void_sale' => void_pos_sale($pdo, $payload),
-        'price_override' => 'Quote ' . save_quote_from_payload($pdo, $attendantId, $payload, 'accepted') . ' saved.',
-        default => 'Request approved. No automatic store action is tied to this type.',
-    };
+    switch ($actionType) {
+        case 'stock_adjustment':
+            return ['message' => apply_stock_adjustment($pdo, $payload), 'sale_id' => null];
+        case 'high_discount':
+            $sale = record_pos_sale($pdo, $attendantId, $payload);
+            return [
+                'message' => 'Sale ' . $sale['sale_number'] . ' completed.',
+                'sale_id' => $sale['id'],
+            ];
+        case 'void_sale':
+            return ['message' => void_pos_sale($pdo, $payload), 'sale_id' => null];
+        case 'price_override':
+            return [
+                'message' => 'Quote ' . save_quote_from_payload($pdo, $attendantId, $payload, 'accepted') . ' saved.',
+                'sale_id' => null,
+            ];
+        default:
+            return [
+                'message' => 'Request approved. No automatic store action is tied to this type.',
+                'sale_id' => null,
+            ];
+    }
 }
