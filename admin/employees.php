@@ -36,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dateOfBirth = trim((string) ($_POST['dob'] ?? $_POST['date_of_birth'] ?? ''));
             $sex = (string) ($_POST['sex'] ?? '');
             $phone = trim((string) ($_POST['phone'] ?? ''));
+            $mpesaPhoneNumber = trim((string) ($_POST['mpesa_phone_number'] ?? ''));
             $email = strtolower(trim((string) ($_POST['email'] ?? '')));
             $hiredAt = trim((string) ($_POST['hire_date'] ?? $_POST['hired_at'] ?? ''));
             $validSexes = ['female', 'male', 'other', 'prefer_not_to_say'];
@@ -73,6 +74,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (strlen($phone) > 40) {
                 $errors[] = 'Phone number must be 40 characters or fewer.';
+            }
+            if (!preg_match('/^2547[0-9]{8}$/', $mpesaPhoneNumber)) {
+                $errors[] = 'Enter the employee M-Pesa number in 2547XXXXXXXX format.';
             }
             if ($email !== '' && (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 180)) {
                 $errors[] = 'Enter a valid email address (up to 180 characters), or leave it blank.';
@@ -123,7 +127,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $statement = $pdo->prepare(
                             'UPDATE employees
                              SET full_name = ?, job_title = ?, monthly_salary = ?,
-                                 date_of_birth = ?, sex = ?, phone = ?, email = ?, hired_at = ?
+                                 date_of_birth = ?, sex = ?, phone = ?, mpesa_phone_number = ?,
+                                 email = ?, hired_at = ?
                              WHERE id = ?'
                         );
                         $statement->execute([
@@ -133,6 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $dateOfBirth !== '' ? $dateOfBirth : null,
                             $sex !== '' ? $sex : null,
                             $phone !== '' ? $phone : null,
+                            $mpesaPhoneNumber,
                             $email !== '' ? $email : null,
                             $hiredAt,
                             $employeeId,
@@ -185,8 +191,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $statement = $pdo->prepare(
                             'INSERT INTO employees
                                 (full_name, job_title, monthly_salary, date_of_birth, sex,
-                                 phone, email, hired_at, user_id, employment_status)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, \'employed\')'
+                                 phone, mpesa_phone_number, email, hired_at, user_id, employment_status)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'employed\')'
                         );
                         $statement->execute([
                             $fullName,
@@ -195,6 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $dateOfBirth,
                             $sex,
                             $phone !== '' ? $phone : null,
+                            $mpesaPhoneNumber,
                             $email !== '' ? $email : null,
                             $hiredAt,
                             $userId,
@@ -357,6 +364,7 @@ require_once __DIR__ . '/../includes/header.php';
             <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/deliveries.php">Deliveries</a>
             <?php if ($view !== 'add'): ?>
                 <a class="btn btn-primary" href="<?= $escape($base) ?>/admin/employees.php?view=add">Add employee</a>
+                <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/admin_payroll.php">Payroll</a>
             <?php endif; ?>
         </div>
     </div>
@@ -380,6 +388,7 @@ require_once __DIR__ . '/../includes/header.php';
                 'date_of_birth' => '',
                 'sex' => '',
                 'phone' => '',
+                'mpesa_phone_number' => '',
                 'email' => '',
                 'hired_at' => date('Y-m-d'),
             ]);
@@ -424,6 +433,16 @@ require_once __DIR__ . '/../includes/header.php';
                 <label class="block">
                     <span class="form-label">Phone (required to create a login account)</span>
                     <input class="form-input" name="phone" type="tel" maxlength="40" value="<?= $escape((string) ($formData['phone'] ?? '')) ?>">
+                </label>
+                <label class="block">
+                    <span class="form-label">M-Pesa salary phone</span>
+                    <input class="form-input" name="mpesa_phone_number" type="tel" inputmode="numeric"
+                           pattern="2547[0-9]{8}" maxlength="12" minlength="12" required
+                           aria-describedby="mpesa-phone-help"
+                           value="<?= $escape((string) ($formData['mpesa_phone_number'] ?? '')) ?>">
+                    <span id="mpesa-phone-help" class="mt-1 block text-xs text-gray-500">
+                        Use 2547XXXXXXXX with no plus sign or spaces.
+                    </span>
                 </label>
                 <label class="block">
                     <span class="form-label">Email (optional)</span>

@@ -73,6 +73,9 @@ function start_session(): void
 // Kick off session as soon as this file is included
 start_session();
 
+require_once __DIR__ . '/../../includes/maintenance.php';
+enforce_maintenance_mode();
+
 
 // ---------------------------------------------------------------------------
 // 2. LOGIN / LOGOUT HELPERS
@@ -154,6 +157,11 @@ function get_user_name(): ?string
 function has_role(string $role): bool
 {
     return is_logged_in() && get_user_role() === $role;
+}
+
+function is_system_owner(): bool
+{
+    return has_role('owner');
 }
 
 /**
@@ -260,6 +268,21 @@ function require_admin(): void
     require_role('admin');
 }
 
+function require_owner(): void
+{
+    if (!is_logged_in()) {
+        redirect('/login.php', 'Please log in to continue.', 'error');
+    }
+
+    if (!is_system_owner()) {
+        redirect(
+            role_dashboard_path(),
+            'You do not have permission to access that page.',
+            'error'
+        );
+    }
+}
+
 /**
  * Restrict the page to attendants OR admins.
  * (Admins can always access attendant views.)
@@ -315,6 +338,7 @@ function redirect_if_logged_in(): void
 function role_dashboard_path(): string
 {
     return match (get_user_role()) {
+        'owner'     => '/admin/owner_dashboard.php',
         'admin'     => '/admin/login.php',
         'attendant' => '/attendant/index.php',
         'customer'  => '/customer/dashboard.php',

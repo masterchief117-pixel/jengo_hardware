@@ -106,7 +106,7 @@ $currentYear = date('Y');
 
     <!-- ── Four-column link grid ─────────────────────────────────────── -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-10">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-10">
 
             <!-- Col 1: Brand & about -->
             <div>
@@ -157,7 +157,7 @@ $currentYear = date('Y');
                         </svg>
                     </a>
                     <!-- WhatsApp -->
-                    <a href="https://wa.me/254700000000"
+                    <a href="https://wa.me/254789453215"
                        class="text-gray-400 hover:text-yellow-400 transition-colors"
                        aria-label="WhatsApp" rel="noopener noreferrer" target="_blank">
                         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"
@@ -235,7 +235,7 @@ $currentYear = date('Y');
                            class="text-sm text-gray-400 hover:text-yellow-400
                                   transition-colors">Shop</a>
                     </li>
-                    <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
+                    <?php if (!has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                     <li>
                         <a href="<?= $base ?>/cart.php"
                            class="text-sm text-gray-400 hover:text-yellow-400
@@ -316,9 +316,9 @@ $currentYear = date('Y');
                                      011.21-.502l4.493 1.498a1 1 0 01.684.949V19
                                      a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                         </svg>
-                        <a href="tel:+254700000000"
+                        <a href="tel:+254789453215"
                            class="hover:text-yellow-400 transition-colors">
-                            +254 700 000 000
+                            0789453215
                         </a>
                     </li>
                     <li class="flex items-start gap-2">
@@ -344,7 +344,7 @@ $currentYear = date('Y');
                             <path stroke-linecap="round" stroke-linejoin="round"
                                   d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        <span>Mon – Sat: 7:30 AM – 6:00 PM</span>
+                        <span>Mon – Sat: 7:30 AM – 5:30 PM</span>
                     </li>
                 </ul>
 
@@ -393,6 +393,25 @@ $currentYear = date('Y');
                 </div>
             </div>
 
+            <!-- Col 5: Customer & contractor support -->
+            <div>
+                <h3 class="text-white text-sm font-semibold uppercase tracking-wider mb-4">
+                    Customer &amp; Contractor Support
+                </h3>
+                <p class="text-sm text-gray-400 leading-relaxed">
+                    Order, delivery, and product assistance.
+                </p>
+                <p class="mt-3 text-sm text-gray-400">Mon–Sat, 7:30 AM–5:30 PM</p>
+                <a href="tel:+254789453215"
+                   class="mt-2 inline-flex font-semibold text-white underline hover:text-yellow-400">
+                    Call 0789453215
+                </a>
+                <a href="https://wa.me/254789453215" target="_blank" rel="noopener noreferrer"
+                   class="mt-2 block text-sm font-semibold text-green-400 hover:text-green-300">
+                    WhatsApp support
+                </a>
+            </div>
+
         </div><!-- /grid -->
     </div><!-- /max-w-7xl -->
 
@@ -428,7 +447,43 @@ $currentYear = date('Y');
 ════════════════════════════════════════════════════════════════════════ -->
 
 
+<div class="modal fade product-description-modal" id="productDescModal"
+     tabindex="-1" aria-hidden="true" aria-labelledby="modalProductName"
+     aria-describedby="modalProductDescription" style="display: none;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content product-description-modal__content">
+            <div class="modal-header product-description-modal__header">
+                <div>
+                    <span id="modalProductCategory" class="product-description-modal__category"></span>
+                    <h2 id="modalProductName" class="text-xl font-bold mt-1">Product details</h2>
+                </div>
+                <button type="button" class="btn-close product-description-modal__close"
+                        data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body product-description-modal__body">
+                <img id="modalProductImage" src="" alt=""
+                     class="product-description-modal__image" hidden>
+                <div class="product-description-modal__price-row">
+                    <span class="product-description-modal__price">
+                        KES <span id="modalProductPrice">0.00</span>
+                    </span>
+                    <span id="modalProductStock" class="product-description-modal__stock"></span>
+                </div>
+                <h3 class="product-description-modal__eyebrow">
+                    Specifications &amp; Description
+                </h3>
+                <p id="modalProductDescription" class="product-description-modal__description"></p>
+            </div>
+            <div class="modal-footer product-description-modal__footer">
+                <button type="button" class="btn btn-secondary btn-sm"
+                        data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ── JavaScript ────────────────────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="<?= $base ?>/assets/js/main.js" defer></script>
 
 </body>

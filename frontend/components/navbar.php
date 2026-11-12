@@ -9,6 +9,7 @@ if ($isLoggedIn) {
 }
 
 $cartCount = max(0, $cartCount);
+$canShopAsCustomer = !in_array($_SESSION['user_role'] ?? null, ['admin', 'attendant', 'employee', 'owner'], true);
 $navBasePath = isset($frontendBasePath) ? rtrim((string) $frontendBasePath, '/') : '';
 ?>
 <nav class="relative z-50 bg-gray-900 text-white shadow-lg" aria-label="Main navigation">
@@ -23,7 +24,7 @@ $navBasePath = isset($frontendBasePath) ? rtrim((string) $frontendBasePath, '/')
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/home.php">Home</a>
             <a class="jengo-hover-transition text-sm text-gray-200 hover:text-orange-400"
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/shop.php">Shop</a>
-            <?php if (!in_array($_SESSION['user_role'] ?? null, ['admin', 'attendant', 'employee'], true)): ?>
+            <?php if ($canShopAsCustomer): ?>
             <a class="jengo-hover-transition relative text-sm text-gray-200 hover:text-orange-400"
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/cart.php"
                aria-label="Cart<?= $cartCount > 0 ? ', ' . $cartCount . ' items' : '' ?>">
@@ -40,6 +41,9 @@ $navBasePath = isset($frontendBasePath) ? rtrim((string) $frontendBasePath, '/')
                    href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/login.php">Login</a>
             <?php endif; ?>
         </div>
+
+        <button id="theme-toggle" class="theme-toggle" type="button"
+                aria-label="Switch to dark mode" aria-pressed="false">Dark</button>
 
         <button id="mobile-menu-toggle"
                 class="inline-flex items-center justify-center rounded-md p-2 text-gray-200 hover:bg-gray-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 md:hidden"
@@ -61,7 +65,7 @@ $navBasePath = isset($frontendBasePath) ? rtrim((string) $frontendBasePath, '/')
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/home.php">Home</a>
             <a class="jengo-hover-transition rounded-md px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 hover:text-orange-400"
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/shop.php">Shop</a>
-            <?php if (!in_array($_SESSION['user_role'] ?? null, ['admin', 'attendant', 'employee'], true)): ?>
+            <?php if ($canShopAsCustomer): ?>
             <a class="jengo-hover-transition flex items-center justify-between rounded-md px-3 py-2 text-sm text-gray-200 hover:bg-gray-800 hover:text-orange-400"
                href="<?= htmlspecialchars($navBasePath, ENT_QUOTES, 'UTF-8') ?>/views/cart.php">
                 <span>Cart</span>

@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
     email         VARCHAR(180)      NOT NULL,
     phone         VARCHAR(20)       NOT NULL,                 -- Used for M-Pesa STK Push
     password_hash VARCHAR(255)      NOT NULL,
-    role          ENUM('customer', 'attendant', 'admin')
+    role          ENUM('customer', 'attendant', 'admin', 'owner')
                                     NOT NULL DEFAULT 'customer',
     is_active     TINYINT(1)        NOT NULL DEFAULT 1,       -- 0 = deactivated by admin
     created_at    TIMESTAMP         NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -30,6 +30,26 @@ CREATE TABLE IF NOT EXISTS users (
     PRIMARY KEY (id),
     UNIQUE KEY uq_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- TABLE: system_settings
+-- Stores the global maintenance-mode state controlled by the system owner.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS system_settings (
+    id           TINYINT UNSIGNED NOT NULL,
+    system_active TINYINT(1) NOT NULL DEFAULT 1,
+    updated_by   INT UNSIGNED NULL,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                               ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    CONSTRAINT chk_system_settings_singleton CHECK (id = 1),
+    CONSTRAINT fk_system_settings_updated_by
+        FOREIGN KEY (updated_by) REFERENCES users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO system_settings (id, system_active) VALUES (1, 1);
 
 
 -- =============================================================================

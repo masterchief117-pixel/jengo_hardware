@@ -139,6 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
             // Write session via auth.php helper
             login_user($user);
 
+            if ($user['role'] === 'owner') {
+                redirect('/admin/owner_dashboard.php');
+            }
+
             if ($user['role'] === 'attendant') {
                 redirect(
                     '/attendant/index.php',
@@ -165,6 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
 
 // ── Page meta ─────────────────────────────────────────────────────────────
 $pageTitle = 'Sign In';
+$bodyClass = 'login-body';
 require_once __DIR__ . '/includes/header.php';
 ?>
 
@@ -176,7 +181,7 @@ require_once __DIR__ . '/includes/header.php';
     <div class="w-full max-w-md">
 
         <!-- Card -->
-        <div class="bg-white rounded-2xl shadow-lg overflow-hidden">
+        <div class="login-card bg-white rounded-2xl shadow-lg overflow-hidden">
 
             <!-- Card header -->
             <div class="bg-gray-900 px-8 py-6 text-center">

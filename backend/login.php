@@ -139,6 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$locked) {
             // Write session via auth.php helper
             login_user($user);
 
+            if ($user['role'] === 'owner') {
+                redirect('/admin/owner_dashboard.php');
+            }
+
             if ($user['role'] === 'attendant') {
                 redirect(
                     '/attendant/index.php',

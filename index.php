@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/product_images.php';
 $featuredProducts = [];
 try {
     $stmt = db()->prepare(
-        'SELECT p.id, p.name, p.slug, p.price, p.stock_qty,
+        'SELECT p.id, p.name, p.slug, p.description, p.price, p.stock_qty,
                 p.image_url, c.name AS category_name
          FROM   products p
          LEFT JOIN categories c ON c.id = p.category_id
@@ -42,16 +42,9 @@ require_once __DIR__ . '/includes/header.php';
 <!-- ══════════════════════════════════════════════════════════════════════
      1. HERO SECTION
 ══════════════════════════════════════════════════════════════════════ -->
-<section class="relative overflow-hidden rounded-2xl mb-10"
-         style="background: linear-gradient(135deg, #1C1C1C 0%, #2d1a0a 55%, #E8500A 100%);"
+<section class="hero-hardware relative overflow-hidden mb-10"
          aria-label="Hero banner">
-
-    <!-- Background texture overlay -->
-    <div class="absolute inset-0 opacity-5"
-         style="background-image: url('data:image/svg+xml,%3Csvg width=\'40\' height=\'40\' viewBox=\'0 0 40 40\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'1\'%3E%3Cpath d=\'M0 40L40 0H20L0 20M40 40V20L20 40\'/%3E%3C/g%3E%3C/svg%3E');"
-         aria-hidden="true"></div>
-
-    <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24
+    <div class="relative max-w-7xl mx-auto
                 flex flex-col lg:flex-row items-center gap-10">
 
         <!-- Hero copy -->
@@ -347,10 +340,10 @@ require_once __DIR__ . '/includes/header.php';
 
             <!-- Footer -->
             <div class="card-footer pt-0 px-4 pb-4">
-                <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                <?php if (has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                 <button type="button" disabled
                         class="btn btn-secondary btn-sm btn-block cursor-not-allowed">
-                    Staff View
+                    <?= is_system_owner() ? 'Owner View' : 'Staff View' ?>
                 </button>
                 <?php elseif ((int)$product['stock_qty'] > 0): ?>
                 <a href="<?= $base ?>/shop.php?product=<?= (int)$product['id'] ?>"
@@ -364,6 +357,24 @@ require_once __DIR__ . '/includes/header.php';
                     Out of Stock
                 </button>
                 <?php endif; ?>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary mt-2 w-100"
+                        data-bs-toggle="modal"
+                        data-bs-target="#productDescModal"
+                        data-name="<?= htmlspecialchars((string) ($product['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                        data-category="<?= htmlspecialchars((string) ($product['category_name'] ?? 'Uncategorized'), ENT_QUOTES, 'UTF-8') ?>"
+                        data-price="<?= number_format((float) ($product['price'] ?? 0)) ?>"
+                        data-stock="<?= (int) ($product['stock_qty'] ?? 0) ?>"
+                        data-image="<?= htmlspecialchars((string) ($displayImage ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                        data-description="<?= htmlspecialchars(
+                            trim((string) ($product['description'] ?? '')) !== ''
+                                ? (string) $product['description']
+                                : 'No detailed description available. Call 0789453215 for specifications.',
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ) ?>">
+                    Description
+                </button>
             </div>
         </article>
         <?php endforeach; ?>

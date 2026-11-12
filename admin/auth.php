@@ -49,6 +49,9 @@ function start_admin_session(): void
 
 start_admin_session();
 
+require_once __DIR__ . '/../includes/maintenance.php';
+enforce_maintenance_mode();
+
 function admin_user_id(): ?int
 {
     return isset($_SESSION['admin_user_id']) ? (int) $_SESSION['admin_user_id'] : null;

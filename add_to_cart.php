@@ -20,10 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ]);
 }
 
-if (has_any_role(['admin', 'attendant', 'employee'])) {
+if (has_any_role(['admin', 'attendant', 'employee', 'owner'])) {
     respond_with_json(403, [
         'success' => false,
-        'message' => 'Staff accounts cannot add products to the customer cart.',
+        'message' => is_system_owner()
+            ? 'Owner accounts cannot add products to the customer cart.'
+            : 'Staff accounts cannot add products to the customer cart.',
     ]);
 }
 

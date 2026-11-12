@@ -22,6 +22,10 @@ require_once __DIR__ . '/../includes/auth.php';
 
 require_login();
 
+if (is_system_owner()) {
+    redirect('/admin/owner_dashboard.php', 'Owner accounts cannot initiate customer payments.', 'error');
+}
+
 $pdo = db();
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -14,6 +14,166 @@ require_once __DIR__ . '/includes/product_images.php';
 
 $pdo = db();
 
+if (empty($_SESSION['product_review_csrf'])) {
+    $_SESSION['product_review_csrf'] = bin2hex(random_bytes(32));
+}
+$productReviewCsrf = (string) $_SESSION['product_review_csrf'];
+
+function customer_has_verified_product_purchase(PDO $pdo, int $customerId, int $productId): bool
+{
+    $purchaseStmt = $pdo->prepare(
+        "SELECT 1
+         FROM orders o
+         INNER JOIN order_items oi ON oi.order_id = o.id
+         WHERE o.customer_id = ?
+           AND oi.product_id = ?
+           AND (
+               o.status = 'completed'
+               OR EXISTS (
+                   SELECT 1
+                   FROM deliveries d
+                   WHERE d.order_reference = o.order_number
+                     AND d.delivery_status = 'delivered'
+               )
+           )
+         LIMIT 1"
+    );
+    $purchaseStmt->execute([$customerId, $productId]);
+
+    return (bool) $purchaseStmt->fetchColumn();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PRODUCT REVIEW HANDLER (POST)
+// ══════════════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && ($_POST['action'] ?? '') === 'submit_review') {
+    $productIdValue = $_POST['product_id'] ?? null;
+    $productId = filter_var(
+        is_scalar($productIdValue) ? $productIdValue : null,
+        FILTER_VALIDATE_INT
+    );
+    $csrfValue = $_POST['csrf_token'] ?? '';
+    $csrfToken = is_string($csrfValue) ? $csrfValue : '';
+
+    if ($productId === false || $productId === null || $productId < 1) {
+        redirect('/shop.php', 'Invalid product.', 'error');
+    }
+
+    $reviewUrl = '/shop.php?product=' . $productId . '#reviews';
+    if (!hash_equals($productReviewCsrf, $csrfToken)) {
+        redirect($reviewUrl, 'Your session expired. Please try submitting your review again.', 'error');
+    }
+
+    $customerNameValue = $_POST['customer_name'] ?? '';
+    $customerName = is_string($customerNameValue)
+        ? trim(strip_tags($customerNameValue))
+        : '';
+    $customerName = preg_replace('/[\x00-\x1F\x7F]/u', '', $customerName) ?? '';
+    $ratingValue = $_POST['rating'] ?? null;
+    $rating = filter_var(is_scalar($ratingValue) ? $ratingValue : null, FILTER_VALIDATE_INT);
+    $commentValue = $_POST['comment'] ?? '';
+    $comment = is_string($commentValue) ? trim(strip_tags($commentValue)) : '';
+
+    if ($customerName === '' || mb_strlen($customerName) > 120) {
+        redirect($reviewUrl, 'Enter your name using no more than 120 characters.', 'error');
+    }
+    if ($rating === false || $rating === null || $rating < 1 || $rating > 5) {
+        redirect($reviewUrl, 'Choose a rating from 1 to 5 stars.', 'error');
+    }
+    if ($comment === '' || mb_strlen($comment) > 5000) {
+        redirect($reviewUrl, 'Enter a comment using no more than 5000 characters.', 'error');
+    }
+
+    $productStmt = $pdo->prepare(
+        'SELECT id FROM products WHERE id = ? AND is_active = 1 LIMIT 1'
+    );
+    $productStmt->execute([$productId]);
+    if (!$productStmt->fetchColumn()) {
+        redirect('/shop.php', 'Product not found.', 'error');
+    }
+
+    $customerId = get_user_id();
+    if (!has_role('customer') || $customerId === null) {
+        redirect($reviewUrl, 'Only verified buyers who have received this item can submit a review.', 'error');
+    }
+
+    if (!customer_has_verified_product_purchase($pdo, $customerId, $productId)) {
+        redirect($reviewUrl, 'Only verified buyers who have received this item can submit a review.', 'error');
+    }
+
+    $photoUrl = null;
+    $photoFile = $_FILES['product_photo'] ?? null;
+    if (is_array($photoFile)) {
+        $uploadError = $photoFile['error'] ?? UPLOAD_ERR_NO_FILE;
+        if (!is_int($uploadError)) {
+            redirect($reviewUrl, 'The arrival photo upload was invalid.', 'error');
+        }
+
+        if ($uploadError !== UPLOAD_ERR_NO_FILE) {
+            if ($uploadError !== UPLOAD_ERR_OK) {
+                redirect($reviewUrl, 'The arrival photo could not be uploaded. Please try again.', 'error');
+            }
+
+            $temporaryPath = $photoFile['tmp_name'] ?? '';
+            $fileSize = is_string($temporaryPath) && is_uploaded_file($temporaryPath)
+                ? filesize($temporaryPath)
+                : false;
+            if ($fileSize === false || $fileSize > 5 * 1024 * 1024) {
+                redirect($reviewUrl, 'The arrival photo must be 5 MB or smaller.', 'error');
+            }
+
+            $fileInfo = new finfo(FILEINFO_MIME_TYPE);
+            $mimeType = $fileInfo->file($temporaryPath);
+            $imageInfo = getimagesize($temporaryPath);
+            $extensions = [
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/webp' => 'webp',
+            ];
+            if (!is_string($mimeType)
+                || !isset($extensions[$mimeType])
+                || $imageInfo === false
+                || ($imageInfo['mime'] ?? '') !== $mimeType) {
+                redirect($reviewUrl, 'Upload a valid JPEG, PNG, or WebP image.', 'error');
+            }
+
+            $uploadDirectory = __DIR__ . '/uploads/reviews';
+            if (!is_dir($uploadDirectory)
+                && !mkdir($uploadDirectory, 0755, true)
+                && !is_dir($uploadDirectory)) {
+                redirect($reviewUrl, 'The arrival photo could not be saved. Please try again later.', 'error');
+            }
+
+            $filename = bin2hex(random_bytes(16)) . '.' . $extensions[$mimeType];
+            if (!move_uploaded_file($temporaryPath, $uploadDirectory . DIRECTORY_SEPARATOR . $filename)) {
+                redirect($reviewUrl, 'The arrival photo could not be saved. Please try again.', 'error');
+            }
+            $photoUrl = 'uploads/reviews/' . $filename;
+        }
+    } elseif ($photoFile !== null) {
+        redirect($reviewUrl, 'The arrival photo upload was invalid.', 'error');
+    }
+
+    $reviewStmt = $pdo->prepare(
+        'INSERT INTO product_reviews (product_id, customer_name, rating, comment, photo_url)
+         VALUES (?, ?, ?, ?, ?)'
+    );
+    try {
+        $reviewStmt->execute([$productId, $customerName, $rating, $comment, $photoUrl]);
+    } catch (Throwable $exception) {
+        if ($photoUrl !== null) {
+            $savedPhoto = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $photoUrl);
+            if (is_file($savedPhoto) && !unlink($savedPhoto)) {
+                error_log('Unable to remove an orphaned product review photo: ' . $savedPhoto);
+            }
+        }
+        throw $exception;
+    }
+
+    redirect($reviewUrl, 'Thank you for sharing your review.', 'success');
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // ADD-TO-CART HANDLER (POST)
 // Accepts both AJAX (expects JSON response) and plain form POST.
@@ -27,8 +187,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     $response  = ['success' => false, 'message' => '', 'cart_count' => 0];
 
-    if (has_any_role(['admin', 'attendant', 'employee'])) {
-        $response['message'] = 'Staff accounts cannot add products to the customer cart.';
+    if (has_any_role(['admin', 'attendant', 'employee', 'owner'])) {
+        $response['message'] = is_system_owner()
+            ? 'Owner accounts cannot add products to the customer cart.'
+            : 'Staff accounts cannot add products to the customer cart.';
     } elseif ($productId < 1) {
         $response['message'] = 'Invalid product.';
     } else {
@@ -65,7 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     if ($isAjax) {
-        if (has_any_role(['admin', 'attendant', 'employee'])) {
+        if (has_any_role(['admin', 'attendant', 'employee', 'owner'])) {
             http_response_code(403);
         }
         header('Content-Type: application/json');
@@ -79,6 +241,240 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         redirect('/shop.php', $response['message'], 'error');
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PRODUCT DETAILS AND REVIEWS
+// ══════════════════════════════════════════════════════════════════════════
+if (isset($_GET['product'])) {
+    $productValue = $_GET['product'];
+    $productId = filter_var(
+        is_scalar($productValue) ? $productValue : null,
+        FILTER_VALIDATE_INT
+    );
+    if ($productId === false || $productId === null || $productId < 1) {
+        redirect('/shop.php', 'Product not found.', 'error');
+    }
+
+    $detailStmt = $pdo->prepare(
+        'SELECT p.id, p.name, p.description, p.sku, p.price, p.stock_qty,
+                p.image_url, c.name AS category_name, c.slug AS category_slug
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         WHERE p.id = ? AND p.is_active = 1
+         LIMIT 1'
+    );
+    $detailStmt->execute([$productId]);
+    $detailProduct = $detailStmt->fetch();
+    if (!$detailProduct) {
+        redirect('/shop.php', 'Product not found.', 'error');
+    }
+
+    $canReview = false;
+    $customerId = get_user_id();
+    if (has_role('customer') && $customerId !== null) {
+        $canReview = customer_has_verified_product_purchase($pdo, $customerId, $productId);
+    }
+
+    $ratingStmt = $pdo->prepare(
+        'SELECT AVG(rating) AS avg_rating, COUNT(*) AS total_reviews
+         FROM product_reviews
+         WHERE product_id = ?'
+    );
+    $ratingStmt->execute([$productId]);
+    $ratingSummary = $ratingStmt->fetch();
+    $averageRating = $ratingSummary['avg_rating'] !== null
+        ? (float) $ratingSummary['avg_rating']
+        : 0.0;
+    $totalReviews = (int) $ratingSummary['total_reviews'];
+
+    $reviewsStmt = $pdo->prepare(
+        'SELECT customer_name, rating, comment, photo_url, created_at
+         FROM product_reviews
+         WHERE product_id = ?
+         ORDER BY created_at DESC, id DESC'
+    );
+    $reviewsStmt->execute([$productId]);
+    $productReviews = $reviewsStmt->fetchAll();
+
+    $pageTitle = $detailProduct['name'];
+    $displayImage = product_image_src($detailProduct['image_url'] ?? '');
+    require_once __DIR__ . '/includes/header.php';
+    ?>
+
+    <nav class="mb-6 text-sm text-gray-500" aria-label="Breadcrumb">
+        <a href="<?= $base ?>/shop.php" class="hover:text-orange">Shop</a>
+        <span class="mx-2" aria-hidden="true">/</span>
+        <span aria-current="page"><?= htmlspecialchars($detailProduct['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>
+    </nav>
+
+    <section class="grid gap-8 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm md:grid-cols-2 md:p-8"
+             aria-labelledby="product-title">
+        <div class="overflow-hidden rounded-xl bg-gray-50">
+            <img src="<?= htmlspecialchars($displayImage, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                 alt="<?= htmlspecialchars($detailProduct['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                 class="h-full max-h-[28rem] w-full object-contain"
+                 loading="lazy">
+        </div>
+        <div>
+            <?php if (!empty($detailProduct['category_name'])): ?>
+                <a href="<?= $base ?>/shop.php?category=<?= urlencode((string) $detailProduct['category_slug']) ?>"
+                   class="text-sm font-semibold text-orange hover:underline">
+                    <?= htmlspecialchars($detailProduct['category_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                </a>
+            <?php endif; ?>
+            <h1 id="product-title" class="mt-2 text-3xl font-extrabold text-gray-900">
+                <?= htmlspecialchars($detailProduct['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+            </h1>
+            <p class="mt-3 text-lg font-bold text-gray-900">
+                KES <?= number_format((float) $detailProduct['price'], 2) ?>
+            </p>
+            <a href="#reviews" class="mt-3 inline-flex items-center gap-2 text-sm text-amber-500 hover:underline">
+                <span aria-label="<?= number_format($averageRating, 1) ?> out of 5 stars">
+                    <?= str_repeat('★', (int) round($averageRating)) ?><?= str_repeat('☆', 5 - (int) round($averageRating)) ?>
+                </span>
+                <span class="text-gray-700">
+                    <?php if ($totalReviews > 0): ?>
+                        <?= number_format($averageRating, 1) ?> / 5 based on <?= $totalReviews ?>
+                        review<?= $totalReviews === 1 ? '' : 's' ?>
+                    <?php else: ?>
+                        No reviews yet
+                    <?php endif; ?>
+                </span>
+            </a>
+            <?php if (!empty($detailProduct['sku'])): ?>
+                <p class="mt-3 text-sm text-gray-500">
+                    SKU: <?= htmlspecialchars($detailProduct['sku'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                </p>
+            <?php endif; ?>
+            <p class="mt-5 whitespace-pre-line leading-7 text-gray-600">
+                <?= htmlspecialchars(trim((string) ($detailProduct['description'] ?? '')) ?: 'No product description is available.', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+            </p>
+            <p class="mt-4 text-sm <?= (int) $detailProduct['stock_qty'] > 0 ? 'text-green-700' : 'text-red-600' ?>">
+                <?= (int) $detailProduct['stock_qty'] > 0 ? 'In stock' : 'Out of stock' ?>
+            </p>
+            <?php if (has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
+                <button type="button" disabled class="btn btn-secondary btn-sm mt-4 cursor-not-allowed">
+                    <?= is_system_owner() ? 'Owner View' : 'Staff View' ?>
+                </button>
+            <?php elseif ((int) $detailProduct['stock_qty'] > 0): ?>
+                <form method="POST" action="<?= $base ?>/shop.php" class="add-to-cart-form mt-4"
+                      data-product-id="<?= (int) $detailProduct['id'] ?>"
+                      data-product-name="<?= htmlspecialchars($detailProduct['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                    <input type="hidden" name="action" value="add_to_cart">
+                    <input type="hidden" name="product_id" value="<?= (int) $detailProduct['id'] ?>">
+                    <input type="hidden" name="qty" value="1">
+                    <button type="submit" class="btn btn-primary add-to-cart-btn">Add to Cart</button>
+                </form>
+            <?php endif; ?>
+        </div>
+    </section>
+
+    <section id="reviews" class="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        <div class="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+            <h2 class="text-xl font-bold text-gray-900">Leave a Review</h2>
+            <p class="mt-1 text-sm text-gray-500">Share your experience with this product.</p>
+            <?php if ($canReview): ?>
+            <form method="POST" enctype="multipart/form-data"
+                  action="<?= $base ?>/shop.php?product=<?= (int) $detailProduct['id'] ?>#reviews"
+                  class="mt-5 space-y-4">
+                <input type="hidden" name="action" value="submit_review">
+                <input type="hidden" name="product_id" value="<?= (int) $detailProduct['id'] ?>">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($productReviewCsrf, ENT_QUOTES, 'UTF-8') ?>">
+                <div>
+                    <label for="review-name" class="mb-1 block text-sm font-semibold text-gray-700">Your Name</label>
+                    <input id="review-name" name="customer_name" type="text" maxlength="120" required
+                           class="form-input w-full" autocomplete="name">
+                </div>
+                <div>
+                    <label for="review-rating" class="mb-1 block text-sm font-semibold text-gray-700">Rating</label>
+                    <select id="review-rating" name="rating" required class="form-select w-full">
+                        <option value="">Select a rating</option>
+                        <option value="5">5 Stars</option>
+                        <option value="4">4 Stars</option>
+                        <option value="3">3 Stars</option>
+                        <option value="2">2 Stars</option>
+                        <option value="1">1 Star</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="review-comment" class="mb-1 block text-sm font-semibold text-gray-700">Your Comment</label>
+                    <textarea id="review-comment" name="comment" rows="5" maxlength="5000" required
+                              class="form-input w-full"></textarea>
+                </div>
+                <div>
+                    <label for="product_photo" class="mb-1 block text-sm font-semibold text-gray-700">
+                        Upload Arrival Photo (Verify Condition):
+                    </label>
+                    <input type="file" name="product_photo" id="product_photo"
+                           accept="image/jpeg,image/png,image/webp"
+                           class="form-input w-full">
+                    <small class="mt-1 block text-sm text-gray-500">
+                        Upload a photo showing the item&apos;s condition upon delivery. Maximum 5 MB.
+                    </small>
+                </div>
+                <button type="submit" class="btn btn-primary">Submit Review</button>
+            </form>
+            <?php else: ?>
+                <p class="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    Only verified buyers who have received this item can submit a review.
+                </p>
+            <?php endif; ?>
+        </div>
+
+        <div>
+            <h2 class="text-xl font-bold text-gray-900">Customer Reviews</h2>
+            <?php if ($productReviews === []): ?>
+                <p class="mt-4 rounded-xl border border-dashed border-gray-300 bg-white p-6 text-gray-500">
+                    Be the first to review this product.
+                </p>
+            <?php else: ?>
+                <div class="mt-4 space-y-4">
+                    <?php foreach ($productReviews as $review): ?>
+                        <article class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <h3 class="font-semibold text-gray-900">
+                                    <?= htmlspecialchars($review['customer_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                                </h3>
+                                <time class="text-sm text-gray-500" datetime="<?= htmlspecialchars($review['created_at'], ENT_QUOTES, 'UTF-8') ?>">
+                                    <?= htmlspecialchars(date('M j, Y', strtotime($review['created_at'])), ENT_QUOTES, 'UTF-8') ?>
+                                </time>
+                            </div>
+                            <p class="mt-1 text-amber-500" aria-label="<?= (int) $review['rating'] ?> out of 5 stars">
+                                <?= str_repeat('★', (int) $review['rating']) ?><?= str_repeat('☆', 5 - (int) $review['rating']) ?>
+                            </p>
+                            <p class="mt-3 whitespace-pre-line break-words text-gray-700">
+                                <?= htmlspecialchars($review['comment'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                            </p>
+                            <?php
+                            $reviewPhoto = (string) ($review['photo_url'] ?? '');
+                            $isReviewPhoto = preg_match(
+                                '#\Auploads/reviews/[a-f0-9]{32}\.(?:jpg|png|webp)\z#',
+                                $reviewPhoto
+                            ) === 1;
+                            ?>
+                            <?php if ($isReviewPhoto): ?>
+                                <a href="<?= $base ?>/<?= htmlspecialchars($reviewPhoto, ENT_QUOTES, 'UTF-8') ?>"
+                                   target="_blank" rel="noopener noreferrer"
+                                   class="mt-4 inline-block"
+                                   aria-label="View arrival photo from <?= htmlspecialchars($review['customer_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                                    <img src="<?= $base ?>/<?= htmlspecialchars($reviewPhoto, ENT_QUOTES, 'UTF-8') ?>"
+                                         alt="Arrival condition photo submitted with this review"
+                                         class="h-28 w-28 rounded-lg border border-gray-200 object-cover"
+                                         loading="lazy">
+                                    <span class="mt-1 block text-xs text-gray-500">Open photo</span>
+                                </a>
+                            <?php endif; ?>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+    </section>
+
+    <?php
+    require_once __DIR__ . '/includes/footer.php';
+    exit;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -159,7 +555,7 @@ $page          = min($page, max(1, $totalPages)); // clamp
 
 // Products for current page
 $productSql = "
-    SELECT p.id, p.name, p.slug, p.price, p.stock_qty,
+    SELECT p.id, p.name, p.slug, p.description, p.price, p.stock_qty,
            p.image_url, p.low_stock_threshold, p.sku,
            c.name AS category_name, c.slug AS category_slug
     FROM   products p
@@ -182,7 +578,7 @@ require_once __DIR__ . '/includes/header.php';
 <!-- ══════════════════════════════════════════════════════════════════════
      PAGE HERO / BREADCRUMB
 ══════════════════════════════════════════════════════════════════════ -->
-<div class="page-hero rounded-xl mb-8 -mx-0">
+<div class="page-hero hero-hardware mb-8 -mx-0">
     <nav class="breadcrumb" aria-label="Breadcrumb">
         <a href="<?= $base ?>/index.php">Home</a>
         <span class="breadcrumb-sep" aria-hidden="true">/</span>
@@ -418,12 +814,12 @@ require_once __DIR__ . '/includes/header.php';
                         </a>
                     </h3>
 
-                    <!-- SKU -->
-                    <?php if ($product['sku']): ?>
-                    <p class="text-xs text-gray-400 mt-1">
-                        SKU: <?= htmlspecialchars($product['sku']) ?>
+                    <p class="product-card__spec">
+                        <?php if ($product['sku']): ?>
+                            SKU <?= htmlspecialchars($product['sku']) ?> ·
+                        <?php endif; ?>
+                        Specification ready for site install
                     </p>
-                    <?php endif; ?>
 
                     <p class="product-card__price">
                         KES <?= number_format((float)$product['price'], 2) ?>
@@ -432,10 +828,10 @@ require_once __DIR__ . '/includes/header.php';
 
                 <!-- Footer: Add to Cart -->
                 <div class="px-4 pb-4">
-                    <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                    <?php if (has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                     <button type="button" disabled
                             class="btn btn-secondary btn-sm btn-block cursor-not-allowed"
-                            aria-disabled="true">Staff View</button>
+                            aria-disabled="true"><?= is_system_owner() ? 'Owner View' : 'Staff View' ?></button>
                     <?php elseif ($inStock): ?>
                     <form method="POST" action="shop.php"
                           class="add-to-cart-form"
@@ -464,6 +860,24 @@ require_once __DIR__ . '/includes/header.php';
                         Out of Stock
                     </button>
                     <?php endif; ?>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary mt-2 w-100"
+                            data-bs-toggle="modal"
+                            data-bs-target="#productDescModal"
+                            data-name="<?= htmlspecialchars((string) ($product['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                            data-category="<?= htmlspecialchars((string) ($product['category_name'] ?? 'Uncategorized'), ENT_QUOTES, 'UTF-8') ?>"
+                            data-price="<?= number_format((float) ($product['price'] ?? 0)) ?>"
+                            data-stock="<?= (int) ($product['stock_qty'] ?? 0) ?>"
+                            data-image="<?= htmlspecialchars((string) ($displayImage ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                            data-description="<?= htmlspecialchars(
+                                trim((string) ($product['description'] ?? '')) !== ''
+                                    ? (string) $product['description']
+                                    : 'No detailed description available. Call 0789453215 for specifications.',
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ) ?>">
+                        Description
+                    </button>
                 </div>
 
             </article>
@@ -610,6 +1024,14 @@ require_once __DIR__ . '/includes/header.php';
                 document.querySelectorAll('[data-cart-badge]').forEach(function (el) {
                     el.textContent = json.cart_count > 9 ? '9+' : String(json.cart_count);
                     el.classList.toggle('hidden', json.cart_count < 1);
+                });
+                document.querySelectorAll('[data-cart-link]').forEach(function (el) {
+                    el.setAttribute(
+                        'aria-label',
+                        json.cart_count > 0
+                            ? 'Shopping cart, ' + json.cart_count + ' items'
+                            : 'Shopping cart'
+                    );
                 });
             } catch (error) {
                 alert(error.message || 'Something went wrong. Please try again.');

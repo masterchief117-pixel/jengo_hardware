@@ -49,6 +49,7 @@ function ensure_pos_schema(PDO $pdo): void
             total_amount     DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
             payment_method   ENUM('cash', 'mpesa', 'card') NOT NULL DEFAULT 'cash',
             status           VARCHAR(20)    NOT NULL DEFAULT 'completed',
+            cancelled_reason VARCHAR(255)       NULL,
             notes            TEXT               NULL,
             created_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -64,6 +65,11 @@ function ensure_pos_schema(PDO $pdo): void
     $customerColumn = $pdo->query("SHOW COLUMNS FROM sales LIKE 'customer_id'")->fetch();
     if ($customerColumn === false) {
         $pdo->exec('ALTER TABLE sales ADD COLUMN customer_id INT UNSIGNED NULL AFTER attendant_id');
+    }
+
+    $cancelledReasonColumn = $pdo->query("SHOW COLUMNS FROM sales LIKE 'cancelled_reason'")->fetch();
+    if ($cancelledReasonColumn === false) {
+        $pdo->exec('ALTER TABLE sales ADD COLUMN cancelled_reason VARCHAR(255) NULL AFTER status');
     }
 
     $pdo->exec(
@@ -86,6 +92,29 @@ function ensure_pos_schema(PDO $pdo): void
             CONSTRAINT fk_sale_items_product
                 FOREIGN KEY (product_id) REFERENCES products (id)
                 ON DELETE SET NULL ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS pos_payments (
+            id                    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            sale_id               INT UNSIGNED NOT NULL,
+            payment_method        ENUM('mpesa') NOT NULL DEFAULT 'mpesa',
+            amount                DECIMAL(12, 2) NOT NULL,
+            phone_number          VARCHAR(20) NOT NULL,
+            status                ENUM('pending', 'success', 'failed', 'cancelled') NOT NULL DEFAULT 'pending',
+            merchant_request_id   VARCHAR(100) NULL,
+            checkout_request_id   VARCHAR(100) NULL,
+            gateway_receipt       VARCHAR(100) NULL,
+            gateway_response      TEXT NULL,
+            created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_pos_payments_checkout (checkout_request_id),
+            KEY idx_pos_payments_sale_status (sale_id, status),
+            CONSTRAINT fk_pos_payments_sale
+                FOREIGN KEY (sale_id) REFERENCES sales (id)
+                ON DELETE CASCADE ON UPDATE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
 
@@ -144,6 +173,20 @@ function money_cents(float|int|string $amount): int
 function pos_reference(string $prefix): string
 {
     return $prefix . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
+}
+
+function format_pos_mpesa_phone(string $phone): ?string
+{
+    $phone = preg_replace('/[\s().-]/', '', trim($phone)) ?? '';
+    if (str_starts_with($phone, '+254')) {
+        $phone = substr($phone, 1);
+    } elseif (str_starts_with($phone, '0') && strlen($phone) === 10) {
+        $phone = '254' . substr($phone, 1);
+    }
+
+    return preg_match('/^254(7[0-9]{8}|1[0-1][0-9]{7})$/', $phone) === 1
+        ? $phone
+        : null;
 }
 
 /**
@@ -272,6 +315,11 @@ function normalize_sale_payload(
  */
 function record_pos_sale(PDO $pdo, int $attendantId, array $sale): array
 {
+    $saleStatus = (string) ($sale['status'] ?? 'completed');
+    if (!in_array($saleStatus, ['pending', 'completed'], true)) {
+        throw new InvalidArgumentException('Unsupported POS sale status.');
+    }
+
     $sale = normalize_sale_payload(
         $pdo,
         is_array($sale['items'] ?? null) ? $sale['items'] : [],
@@ -294,7 +342,7 @@ function record_pos_sale(PDO $pdo, int $attendantId, array $sale): array
             'INSERT INTO sales
                 (sale_number, attendant_id, customer_id, customer_name, subtotal, discount_percent,
                  discount_amount, total_amount, payment_method, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, \'completed\')'
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $insert->execute([
             $saleNumber,
@@ -306,6 +354,7 @@ function record_pos_sale(PDO $pdo, int $attendantId, array $sale): array
             $sale['discount_amount'],
             $sale['total'],
             $sale['payment_method'],
+            $saleStatus,
         ]);
         $saleId = (int) $pdo->lastInsertId();
 
@@ -342,6 +391,91 @@ function record_pos_sale(PDO $pdo, int $attendantId, array $sale): array
         }
 
         return ['id' => $saleId, 'sale_number' => $saleNumber];
+    } catch (Throwable $exception) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+}
+
+/**
+ * Cancel an awaiting M-Pesa POS sale and release its reserved stock exactly once.
+ *
+ * @return array{cancelled: bool, message: string}
+ */
+function cancel_pos_sale_payment(
+    PDO $pdo,
+    int $saleId,
+    int $attendantId,
+    string $reason
+): array {
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $saleStatement = $pdo->prepare(
+            'SELECT id, attendant_id, payment_method, status
+             FROM sales
+             WHERE id = ?
+             FOR UPDATE'
+        );
+        $saleStatement->execute([$saleId]);
+        $sale = $saleStatement->fetch();
+        if ($sale === false || (int) $sale['attendant_id'] !== $attendantId) {
+            throw new RuntimeException('Pending payment was not found.');
+        }
+        if ((string) $sale['payment_method'] !== 'mpesa') {
+            throw new RuntimeException('Only an M-Pesa payment can be cancelled here.');
+        }
+        if ((string) $sale['status'] !== 'pending') {
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+            return [
+                'cancelled' => false,
+                'message' => (string) $sale['status'] === 'cancelled'
+                    ? 'Payment was already cancelled.'
+                    : 'Payment is no longer pending.',
+            ];
+        }
+
+        $itemsStatement = $pdo->prepare(
+            'SELECT product_id, SUM(quantity) AS quantity
+             FROM sale_items
+             WHERE sale_id = ? AND product_id IS NOT NULL
+             GROUP BY product_id'
+        );
+        $itemsStatement->execute([$saleId]);
+        $restoreStock = $pdo->prepare(
+            'UPDATE products SET stock_qty = stock_qty + ? WHERE id = ?'
+        );
+        foreach ($itemsStatement->fetchAll() as $item) {
+            $restoreStock->execute([(int) $item['quantity'], (int) $item['product_id']]);
+        }
+
+        $cancelSale = $pdo->prepare(
+            "UPDATE sales
+             SET status = 'cancelled', cancelled_reason = ?
+             WHERE id = ? AND status = 'pending'"
+        );
+        $cancelSale->execute([mb_substr($reason, 0, 255), $saleId]);
+        if ($cancelSale->rowCount() !== 1) {
+            throw new RuntimeException('Payment state changed before it could be cancelled.');
+        }
+
+        $pdo->prepare(
+            "UPDATE pos_payments
+             SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+             WHERE sale_id = ? AND status = 'pending'"
+        )->execute([$saleId]);
+
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return ['cancelled' => true, 'message' => 'Payment terminated safely.'];
     } catch (Throwable $exception) {
         if ($ownsTransaction && $pdo->inTransaction()) {
             $pdo->rollBack();

@@ -26,8 +26,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     $response  = ['success' => false, 'message' => '', 'cart_count' => 0];
 
-    if (has_any_role(['admin', 'attendant', 'employee'])) {
-        $response['message'] = 'Staff accounts cannot add products to the customer cart.';
+    if (has_any_role(['admin', 'attendant', 'employee', 'owner'])) {
+        $response['message'] = is_system_owner()
+            ? 'Owner accounts cannot add products to the customer cart.'
+            : 'Staff accounts cannot add products to the customer cart.';
     } elseif ($productId < 1) {
         $response['message'] = 'Invalid product.';
     } else {
@@ -64,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     if ($isAjax) {
-        if (has_any_role(['admin', 'attendant', 'employee'])) {
+        if (has_any_role(['admin', 'attendant', 'employee', 'owner'])) {
             http_response_code(403);
         }
         header('Content-Type: application/json');
@@ -446,10 +448,10 @@ require_once __DIR__ . '/includes/header.php';
 
                 <!-- Footer: Add to Cart -->
                 <div class="px-4 pb-4">
-                    <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                    <?php if (has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                     <button type="button" disabled
                             class="btn btn-secondary btn-sm btn-block cursor-not-allowed"
-                            aria-disabled="true">Staff View</button>
+                            aria-disabled="true"><?= is_system_owner() ? 'Owner View' : 'Staff View' ?></button>
                     <?php elseif ($inStock): ?>
                     <form method="POST" action="shop.php"
                           class="add-to-cart-form"
@@ -651,6 +653,14 @@ require_once __DIR__ . '/includes/header.php';
                     document.querySelectorAll('[data-cart-badge]').forEach(function (el) {
                         el.textContent = json.cart_count > 9 ? '9+' : String(json.cart_count);
                         el.classList.toggle('hidden', json.cart_count < 1);
+                    });
+                    document.querySelectorAll('[data-cart-link]').forEach(function (el) {
+                        el.setAttribute(
+                            'aria-label',
+                            json.cart_count > 0
+                                ? 'Shopping cart, ' + json.cart_count + ' items'
+                                : 'Shopping cart'
+                        );
                     });
                 }
             })

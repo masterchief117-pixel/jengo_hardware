@@ -58,6 +58,7 @@ jengo_hardware/
 ├── includes/
 │   ├── header.php                # Shared page header / navigation
 │   ├── footer.php                # Shared page footer
+│   ├── mpesa_b2c.php             # Daraja B2C salary transfer client
 │   └── auth.php                  # Session checks and role-based access control
 │
 ├── assets/
@@ -73,15 +74,23 @@ jengo_hardware/
 │   ├── paystack_verify.php       # Verifies Paystack payment after redirect
 │   └── paystack_webhook.php      # Receives Paystack webhook events
 │
+├── api/
+│   ├── mpesa_b2c_result.php      # Receives B2C salary transfer results
+│   └── mpesa_b2c_timeout.php     # Receives B2C salary transfer timeouts
+│
 ├── admin/
 │   ├── index.php                 # Admin dashboard (sales summary, stats)
 │   ├── products.php              # Add / edit / delete products
 │   ├── orders.php                # View and manage all orders
+│   ├── admin_gallery.php         # Admin gallery upload and management
 │   ├── users.php                 # Manage customers and attendants
 │   └── payments_record.php       # Full payment transaction history
 │
+├── gallery.php                   # Public photo gallery
+│
 ├── attendant/
-│   └── index.php                 # Attendant POS dashboard
+│   ├── index.php                 # Attendant POS dashboard
+│   └── gallery.php               # Attendant gallery manager
 │
 ├── customer/
 │   └── dashboard.php             # Customer order history and account
@@ -117,6 +126,14 @@ jengo_hardware/
 - Creates and deactivates user accounts (`admin/users.php`).
 - Reviews all payment transactions (`admin/payments_record.php`).
 - Accesses the summary dashboard at `admin/index.php`.
+
+### Owner
+- The intended user account is granted the `owner` role by its confirmed email
+  address after the `database/system_owner.sql` migration is applied.
+- Signs in through the regular `login.php` page and opens `admin/owner_dashboard.php`.
+- Views read-only sales, pending-order, and inventory metrics, and can enable or
+  disable maintenance mode. The owner role is not assignable from the regular
+  user-management form.
 
 ---
 
@@ -156,6 +173,31 @@ Alternatively, via MySQL CLI:
 ```bash
 mysql -u root -p jengo_hardware < database/schema.sql
 ```
+
+For an existing installation, import `database/product_reviews.sql` into the
+`jengo_hardware` database to add the product reviews table.
+If that table already exists from an earlier version, instead run
+`database/product_reviews_photo.sql` once to add the nullable photo column.
+Only signed-in customers with a completed order or delivered item can submit a
+review.
+
+For an existing installation, apply `database/system_owner.sql` to add the
+owner role and maintenance-mode setting. The migration assigns owner only to
+`david@jengohardware.co.ke` if that account exists; rerun it after creating the
+account if it does not yet exist. If `backend/` uses a separate database, apply
+`backend/database/system_owner.sql` there as well. Maintenance mode blocks
+normal storefront and staff pages with HTTP 503; sign-in/out, the owner role,
+application APIs, and payment callbacks remain available.
+
+#### Attendant POS Payments
+
+For an existing database, import `database/attendant_pos.sql` to ensure the POS
+tables and `sales.cancelled_reason` column exist. Configure the Daraja sandbox
+credentials and a publicly reachable HTTPS `MPESA_CALLBACK_URL` in `.env` before
+using M-Pesa at the register. POS M-Pesa sales reserve inventory while pending;
+cashier cancellation, customer abort, gateway failure, or the 60-second timeout
+cancels the sale and releases the reserved stock. A successful Daraja callback
+marks the sale completed. Cash and card sales continue to complete immediately.
 
 #### Separate Admin Portal
 
@@ -210,6 +252,11 @@ MPESA_SHORTCODE=174379
 MPESA_PASSKEY=your_lipa_na_mpesa_passkey
 MPESA_CALLBACK_URL=https://your-ngrok-url.ngrok-free.app/payments/mpesa_callback.php
 MPESA_ENV=sandbox
+MPESA_B2C_INITIATOR_NAME=your_b2c_initiator_name
+MPESA_B2C_SECURITY_CREDENTIAL=your_encrypted_initiator_password
+MPESA_B2C_RESULT_URL=https://your-ngrok-url.ngrok-free.app/api/mpesa_b2c_result.php
+MPESA_B2C_TIMEOUT_URL=https://your-ngrok-url.ngrok-free.app/api/mpesa_b2c_timeout.php
+MPESA_B2C_CALLBACK_TOKEN=generate_a_random_secret_at_least_32_characters_long
 
 # Paystack
 PAYSTACK_SECRET_KEY=sk_test_your_secret_key
@@ -259,12 +306,40 @@ http://localhost/GitHub/jengo_hardware/
 ### M-Pesa (Safaricom Daraja)
 - Uses the **Lipa Na M-Pesa Online (STK Push)** API.
 - Sandbox credentials available at [developer.safaricom.co.ke](https://developer.safaricom.co.ke).
-- `mpesa_push.php` initiates the push; `mpesa_callback.php` listens for confirmation.
+- Customer checkout uses `mpesa_push.php`; attendant POS payments use
+  `attendant/api_start_pos_payment.php`.
+- `payments/mpesa_callback.php` listens for checkout and POS confirmations.
+- Admin payroll uses Daraja B2C with the B2C initiator name and encrypted
+  security credential in `.env`. Configure both public HTTPS callback URLs and
+  a random callback token; salary transfers remain processing until the result
+  callback confirms the receipt. Keep `MPESA_ENV=sandbox` until production
+  credentials and shortcode are approved by Safaricom.
+- Apply `database/payroll_records.sql` for a new installation. For an existing
+  payroll table, apply `database/payroll_mpesa.sql` once to add employee M-Pesa
+  numbers and Daraja callback fields; old non-Daraja payroll entries are kept
+  as `Legacy Record`. Staff M-Pesa numbers are maintained from Employees and
+  must use `2547XXXXXXXX`. The dashboard only permits whole-KES salaries and
+  one pending or confirmed salary transfer per employee each calendar month.
+- POS payments can be cancelled from the register; unanswered prompts time out
+  after 60 seconds and release the inventory reservation.
 
 ### Paystack
 - Uses the **Paystack Transactions API**.
 - Test keys available at [dashboard.paystack.com](https://dashboard.paystack.com).
 - `paystack_init.php` starts the transaction; `paystack_verify.php` confirms it after redirect; `paystack_webhook.php` handles server-to-server events.
+
+### Photo Gallery
+- Apply `database/gallery.sql` to create the album and photo tables and migrate
+  existing flat-gallery photos into an `Imported Gallery` album. The migration
+  is safe to rerun. Fresh installations also receive the gallery tables from
+  `database/schema.sql`.
+- Admins and attendants can create albums and manage their photos from
+  `admin/admin_gallery.php` and `attendant/gallery.php`. Album covers and photos
+  can be uploaded as JPEG, PNG, GIF or WebP images (up to 5 MB) or supplied as
+  HTTP/HTTPS image URLs. Captions are optional. Local uploads are stored under
+  `uploads/gallery/`; the public `gallery.php` page lists albums and shows the
+  photos for the selected album. Deleting an album also deletes its photo
+  records and managed local image files.
 
 ---
 

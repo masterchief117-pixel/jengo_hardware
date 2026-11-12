@@ -142,10 +142,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $customerId
             );
 
+            $mpesaPhone = '';
+            if ($sale['payment_method'] === 'mpesa') {
+                $phoneInput = $_POST['mpesa_phone'] ?? '';
+                $mpesaPhone = is_string($phoneInput)
+                    ? (format_pos_mpesa_phone($phoneInput) ?? '')
+                    : '';
+                if ($mpesaPhone === '') {
+                    throw new InvalidArgumentException('Enter a valid Kenyan M-Pesa phone number.');
+                }
+                if (pos_sale_needs_approval($sale)) {
+                    throw new InvalidArgumentException(
+                        'M-Pesa checkout is unavailable for discounts requiring admin approval. Remove the discount or use another payment method.'
+                    );
+                }
+            }
+
             if (pos_sale_needs_approval($sale)) {
                 submit_approval_request($attendantId, 'high_discount', $sale);
                 $_SESSION['pos_cart'] = [];
                 redirect('/attendant/pos.php', APPROVAL_SUCCESS_MESSAGE, 'info');
+            }
+
+            if ($sale['payment_method'] === 'mpesa') {
+                $sale['status'] = 'pending';
+                $recordedSale = record_pos_sale($pdo, $attendantId, $sale);
+                $_SESSION['pos_cart'] = [];
+                $_SESSION['pos_pending_payment'] = [
+                    'sale_id' => $recordedSale['id'],
+                    'phone' => $mpesaPhone,
+                ];
+                redirect('/attendant/pos.php?payment=' . $recordedSale['id']);
             }
 
             $recordedSale = record_pos_sale($pdo, $attendantId, $sale);
@@ -177,6 +204,12 @@ $productSql .= ' ORDER BY name ASC LIMIT 30';
 $productStatement = $pdo->prepare($productSql);
 $productStatement->execute($productParams);
 $products = $productStatement->fetchAll();
+$pendingPayment = $_SESSION['pos_pending_payment'] ?? null;
+$pendingSaleId = is_array($pendingPayment) ? (int) ($pendingPayment['sale_id'] ?? 0) : 0;
+$showPaymentModal = isset($_GET['payment'])
+    && is_array($pendingPayment)
+    && (int) ($_GET['payment']) === $pendingSaleId
+    && $pendingSaleId > 0;
 
 $subtotal = 0.0;
 $priceOverridden = false;
@@ -197,6 +230,10 @@ require_once __DIR__ . '/../includes/header.php';
         <p class="mt-1 text-sm text-gray-500">
             Ring up a walk-in sale. Discounts above 5% or KES 1,000, and any lowered unit price, are sent to an admin instead of completing.
         </p>
+        <p class="mt-2 inline-flex rounded border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-700">
+            Admin / Tech Support Hotline:
+            <a class="ml-1 text-orange underline" href="tel:+254789453215">0789453215</a>
+        </p>
     </div>
     <a href="<?= htmlspecialchars(rtrim((string) env('APP_URL', ''), '/') . '/customers.php', ENT_QUOTES, 'UTF-8') ?>"
        class="btn btn-secondary btn-sm">Manage Customers</a>
@@ -213,7 +250,7 @@ require_once __DIR__ . '/../includes/header.php';
             </label>
             <button type="submit" class="btn btn-secondary">Search</button>
         </form>
-        <div class="mt-4 overflow-x-auto">
+        <div class="table-responsive mt-4 overflow-x-auto">
             <table class="w-full text-left text-sm">
                 <thead>
                     <tr class="border-b text-gray-500">
@@ -280,7 +317,7 @@ require_once __DIR__ . '/../includes/header.php';
         <?php else: ?>
             <form method="post" class="mt-4 space-y-4">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($approvalCsrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                <div class="overflow-x-auto">
+                <div class="table-responsive overflow-x-auto">
                     <table class="w-full text-left text-sm">
                         <thead>
                             <tr class="border-b text-gray-500">
@@ -342,7 +379,8 @@ require_once __DIR__ . '/../includes/header.php';
                                     $customerLabel .= ' - ' . $customer['company_name'];
                                 }
                                 ?>
-                                <option value="<?= (int) $customer['id'] ?>">
+                                <option value="<?= (int) $customer['id'] ?>"
+                                        data-phone="<?= htmlspecialchars((string) $customer['phone'], ENT_QUOTES, 'UTF-8') ?>">
                                     <?= htmlspecialchars($customerLabel, ENT_QUOTES, 'UTF-8') ?>
                                 </option>
                             <?php endforeach; ?>
@@ -355,6 +393,12 @@ require_once __DIR__ . '/../includes/header.php';
                             <option value="mpesa">M-Pesa</option>
                             <option value="card">Card</option>
                         </select>
+                    </label>
+                    <label id="mpesa-phone-field" class="hidden">
+                        <span class="form-label">M-Pesa Phone</span>
+                        <input type="tel" name="mpesa_phone" class="form-input"
+                               placeholder="0712 345 678" autocomplete="tel"
+                               inputmode="tel">
                     </label>
                     <label>
                         <span class="form-label">Discount %</span>
@@ -386,10 +430,212 @@ require_once __DIR__ . '/../includes/header.php';
     </section>
 </div>
 
+<?php if ($showPaymentModal): ?>
+    <div id="pos-payment-modal"
+         class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/70 p-4"
+         role="dialog" aria-modal="true" aria-labelledby="pos-payment-title">
+        <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div class="text-center">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-2xl"
+                     aria-hidden="true">📱</div>
+                <h2 id="pos-payment-title" class="text-xl font-bold text-gray-900">M-Pesa Payment</h2>
+                <p id="pos-payment-message" class="mt-2 text-sm text-gray-600" role="status" aria-live="polite">
+                    Sending payment prompt...
+                </p>
+            </div>
+            <div class="mt-6 flex justify-center">
+                <span id="pos-payment-spinner"
+                      class="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-green-600"
+                      aria-label="Payment in progress"></span>
+            </div>
+            <p id="pos-payment-countdown" class="mt-4 text-center text-xs text-gray-500"></p>
+            <div class="mt-6 flex flex-wrap justify-center gap-3">
+                <button id="pos-payment-cancel" type="button" class="btn btn-danger">
+                    Cancel / Abort Payment
+                </button>
+                <a id="pos-payment-receipt" href="<?= $base ?>/receipt.php?sale_id=<?= $pendingSaleId ?>"
+                   class="btn btn-primary hidden">View Receipt</a>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+
 <script>
 (() => {
+    const paymentModal = document.getElementById('pos-payment-modal');
+    if (paymentModal) {
+        const saleId = <?= json_encode($pendingSaleId) ?>;
+        const csrfToken = <?= json_encode($approvalCsrfToken) ?>;
+        const phone = <?= json_encode((string) ($pendingPayment['phone'] ?? '')) ?>;
+        const paymentMessage = document.getElementById('pos-payment-message');
+        const countdown = document.getElementById('pos-payment-countdown');
+        const spinner = document.getElementById('pos-payment-spinner');
+        const cancelButton = document.getElementById('pos-payment-cancel');
+        const receiptLink = document.getElementById('pos-payment-receipt');
+        let finished = false;
+        let pollTimer = 0;
+        let timeoutTimer = 0;
+
+        function armPaymentTimeout(startedAt) {
+            let secondsLeft = Math.max(0, 60 - Math.floor(Date.now() / 1000 - startedAt));
+            countdown.textContent = `Payment will time out in ${secondsLeft} seconds.`;
+            if (secondsLeft === 0) {
+                cancelPayment('Payment timed out');
+                return;
+            }
+            timeoutTimer = window.setTimeout(() => cancelPayment('Payment timed out'), secondsLeft * 1000);
+            const countdownTimer = window.setInterval(() => {
+                secondsLeft -= 1;
+                if (finished || secondsLeft <= 0) {
+                    window.clearInterval(countdownTimer);
+                    return;
+                }
+                countdown.textContent = `Payment will time out in ${secondsLeft} seconds.`;
+            }, 1000);
+        }
+
+        function setMessage(message, isError) {
+            paymentMessage.textContent = message;
+            paymentMessage.className = `mt-2 text-sm ${isError ? 'text-red-600' : 'text-gray-600'}`;
+        }
+
+        async function cancelPayment(reason) {
+            if (finished) return;
+            cancelButton.disabled = true;
+            try {
+                const response = await fetch('api_cancel_payment.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({ sale_id: saleId, reason })
+                });
+                const result = await response.json();
+                if (!response.ok || result.success !== true) {
+                    throw new Error(result.message || 'Could not cancel this payment.');
+                }
+                finished = true;
+                window.clearInterval(pollTimer);
+                window.clearTimeout(timeoutTimer);
+                paymentModal.remove();
+                const message = document.getElementById('barcode-scan-message');
+                message.textContent = reason === 'Payment timed out'
+                    ? 'Payment timed out. Reserved stock was released; register is ready.'
+                    : 'Payment cancelled. Reserved stock was released; register is ready.';
+                message.className = 'mt-2 text-sm text-amber-700';
+                document.getElementById('barcode-scanner')?.focus();
+            } catch (error) {
+                cancelButton.disabled = false;
+                setMessage(error instanceof Error ? error.message : 'Could not cancel this payment.', true);
+            }
+        }
+
+        async function pollPayment() {
+            if (finished) return;
+            try {
+                const response = await fetch(
+                    `api_pos_payment_status.php?sale_id=${encodeURIComponent(saleId)}`,
+                    { headers: { 'X-CSRF-Token': csrfToken }, cache: 'no-store' }
+                );
+                const result = await response.json();
+                if (!response.ok || result.success !== true) {
+                    throw new Error(result.message || 'Unable to check payment status.');
+                }
+                if (result.state === 'completed') {
+                    finished = true;
+                    window.clearInterval(pollTimer);
+                    window.clearTimeout(timeoutTimer);
+                    setMessage('Payment confirmed. Opening receipt...', false);
+                    spinner.classList.add('hidden');
+                    receiptLink.classList.remove('hidden');
+                    cancelButton.classList.add('hidden');
+                    window.location.assign(result.sale_id
+                        ? `../receipt.php?sale_id=${encodeURIComponent(result.sale_id)}`
+                        : receiptLink.href);
+                } else if (result.state === 'cancelled') {
+                    finished = true;
+                    window.clearInterval(pollTimer);
+                    window.clearTimeout(timeoutTimer);
+                    paymentModal.remove();
+                    window.location.reload();
+                } else {
+                    setMessage(result.message, false);
+                }
+            } catch (error) {
+                if (!finished) {
+                    setMessage(error instanceof Error ? error.message : 'Unable to check payment status.', true);
+                }
+            }
+        }
+
+        cancelButton.addEventListener('click', () => {
+            cancelPayment(
+                cancelButton.textContent === 'Release Reserved Stock'
+                    ? 'STK Timeout'
+                    : 'Cancelled by Cashier'
+            );
+        });
+        pollTimer = window.setInterval(pollPayment, 2000);
+
+        fetch('api_start_pos_payment.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            },
+            body: JSON.stringify({ sale_id: saleId, phone })
+        })
+            .then(async (response) => {
+                const result = await response.json();
+                if (!response.ok || result.success !== true) {
+                    throw new Error(result.message || 'Unable to start M-Pesa payment.');
+                }
+                setMessage(result.message, false);
+                if (result.state === 'cancelled') {
+                    finished = true;
+                    window.clearInterval(pollTimer);
+                    paymentModal.remove();
+                    const message = document.getElementById('barcode-scan-message');
+                    message.textContent = result.message;
+                    message.className = 'mt-2 text-sm text-amber-700';
+                    document.getElementById('barcode-scanner')?.focus();
+                } else {
+                    armPaymentTimeout(Number(result.started_at) || Math.floor(Date.now() / 1000));
+                }
+            })
+            .catch((error) => {
+                if (!finished) {
+                    setMessage(error instanceof Error ? error.message : 'Unable to start payment.', true);
+                    spinner.classList.add('hidden');
+                    cancelButton.textContent = 'Release Reserved Stock';
+                }
+            });
+    }
+
     const scanner = document.getElementById('barcode-scanner');
     const message = document.getElementById('barcode-scan-message');
+    const paymentMethod = document.querySelector('select[name="payment_method"]');
+    const customerSelect = document.querySelector('select[name="customer_id"]');
+    const mpesaPhoneField = document.getElementById('mpesa-phone-field');
+    const mpesaPhoneInput = mpesaPhoneField?.querySelector('input[name="mpesa_phone"]');
+    function updateMpesaPhoneField() {
+        const isMpesa = paymentMethod?.value === 'mpesa';
+        mpesaPhoneField?.classList.toggle('hidden', !isMpesa);
+        if (mpesaPhoneInput) {
+            mpesaPhoneInput.required = Boolean(isMpesa);
+            if (isMpesa && customerSelect?.selectedOptions[0]?.dataset.phone && !mpesaPhoneInput.value) {
+                mpesaPhoneInput.value = customerSelect.selectedOptions[0].dataset.phone;
+            }
+        }
+    }
+    paymentMethod?.addEventListener('change', updateMpesaPhoneField);
+    customerSelect?.addEventListener('change', () => {
+        if (paymentMethod?.value === 'mpesa' && mpesaPhoneInput) {
+            mpesaPhoneInput.value = customerSelect.selectedOptions[0]?.dataset.phone || '';
+        }
+    });
+    updateMpesaPhoneField();
     let requestPending = false;
     let messageTimer;
 

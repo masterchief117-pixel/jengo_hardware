@@ -19,6 +19,13 @@ error_log
 # User-uploaded files
 /uploads/
 **/uploads/
+!/uploads/
+/uploads/*
+!/uploads/gallery/
+/uploads/gallery/*
+!/uploads/gallery/.htaccess
+!**/uploads/gallery/
+!**/uploads/gallery/.htaccess
 
 # Dependencies
 /vendor/

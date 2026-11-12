@@ -21,6 +21,7 @@ $values = [
     'monthly_salary' => '0.00',
     'date_of_birth' => '',
     'sex' => '',
+    'mpesa_phone_number' => '',
 ];
 
 if (empty($_SESSION['admin_operations_csrf'])) {
@@ -109,6 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (in_array($values['role'], ['attendant', 'admin'], true)) {
+        if (!preg_match('/^2547[0-9]{8}$/', $values['mpesa_phone_number'])) {
+            $errors['mpesa_phone_number'] = 'Enter the M-Pesa salary number in 2547XXXXXXXX format.';
+        }
         if ($salaryInput === '') {
             $salaryInput = '0.00';
             $values['monthly_salary'] = $salaryInput;
@@ -154,8 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $employee = $pdo->prepare(
                     "INSERT INTO employees
                         (user_id, full_name, job_title, monthly_salary, date_of_birth,
-                         sex, phone, email, hired_at, employment_status)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'employed')"
+                         sex, phone, mpesa_phone_number, email, hired_at, employment_status)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'employed')"
                 );
                 $employee->execute([
                     $userId,
@@ -165,6 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $dob,
                     $sex,
                     $values['phone'],
+                    $values['mpesa_phone_number'],
                     $values['email'],
                 ]);
                 $employmentEvent = $pdo->prepare(
@@ -285,6 +290,20 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
                         <p class="mt-1 text-sm text-red-600" role="alert"><?= $escape($errors['sex']) ?></p>
                     <?php endif; ?>
                 </div>
+                <div class="sm:col-span-2">
+                    <label for="mpesa_phone_number" class="mb-1 block text-sm font-semibold text-gray-700">
+                        M-Pesa Salary Phone
+                    </label>
+                    <input id="mpesa_phone_number" name="mpesa_phone_number" type="tel"
+                           inputmode="numeric" pattern="2547[0-9]{8}" maxlength="12" minlength="12"
+                           value="<?= $escape($values['mpesa_phone_number']) ?>"
+                           placeholder="2547XXXXXXXX"
+                           class="w-full rounded-lg border border-gray-300 px-3 py-2">
+                    <p class="mt-1 text-xs text-gray-500">Required for employee accounts. Use 2547XXXXXXXX.</p>
+                    <?php if (isset($errors['mpesa_phone_number'])): ?>
+                        <p class="mt-1 text-sm text-red-600" role="alert"><?= $escape($errors['mpesa_phone_number']) ?></p>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
 
@@ -335,6 +354,7 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
     const employeeProfileFields = document.getElementById('employee-profile-fields');
     const dateOfBirthInput = document.getElementById('date_of_birth');
     const sexInput = document.getElementById('sex');
+    const mpesaPhoneInput = document.getElementById('mpesa_phone_number');
 
     function updateSalaryVisibility() {
         const requiresEmployeeRecord = ['attendant', 'admin'].includes(roleField.value);
@@ -345,6 +365,8 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
         dateOfBirthInput.disabled = !requiresEmployeeRecord;
         sexInput.required = requiresEmployeeRecord;
         sexInput.disabled = !requiresEmployeeRecord;
+        mpesaPhoneInput.required = requiresEmployeeRecord;
+        mpesaPhoneInput.disabled = !requiresEmployeeRecord;
     }
 
     roleField.addEventListener('change', updateSalaryVisibility);

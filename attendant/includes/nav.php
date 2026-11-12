@@ -15,6 +15,7 @@ $attendantModules = [
     ['POS', '/attendant/pos.php'],
     ['Inventory Lookup', '/attendant/inventory.php'],
     ['Quotes & Customers', '/attendant/quotes.php'],
+    ['Gallery', '/attendant/gallery.php'],
     ['My Shift', '/attendant/shift.php'],
     ['Pending Approvals Status', '/attendant/approvals.php'],
 ];

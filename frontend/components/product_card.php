@@ -17,7 +17,9 @@ if ($stockQuantity > 5) {
     $stockClasses = 'bg-red-100 text-red-800';
 }
 
+$userRole = $_SESSION['user_role'] ?? null;
 $canAddToCart = $productId !== '' && $productPrice !== null && $stockQuantity > 0;
+$isStaffOrOwner = in_array($userRole, ['admin', 'attendant', 'employee', 'owner'], true);
 $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 ?>
 <article class="jengo-hover-lift flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -56,11 +58,11 @@ $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOT
                     <span class="text-sm font-medium text-gray-500">Price unavailable</span>
                 <?php endif; ?>
             </p>
-            <?php if (in_array($_SESSION['user_role'] ?? null, ['admin', 'attendant', 'employee'], true)): ?>
+            <?php if ($isStaffOrOwner): ?>
             <button type="button" disabled
                     class="jengo-hover-transition mt-4 inline-flex w-full items-center justify-center rounded-lg border border-gray-300 px-4 py-3 text-sm font-bold text-gray-600"
                     aria-disabled="true">
-                Staff View
+                <?= $userRole === 'owner' ? 'Owner View' : 'Staff View' ?>
             </button>
             <?php else: ?>
             <button type="button"

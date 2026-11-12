@@ -91,3 +91,96 @@
         animation: none;
     }
 }
+
+.theme-toggle {
+    flex-shrink: 0;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 0.375rem;
+    background: transparent;
+    color: #fff;
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.theme-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+html.dark-mode {
+    color-scheme: dark;
+    --jengo-scrollbar-track: #252525;
+    --jengo-scrollbar-thumb: #666;
+}
+
+html.dark-mode body.bg-gray-50,
+html.dark-mode body,
+body.dark-mode {
+    background-color: #121212;
+    color: #e0e0e0;
+}
+
+.dark-mode .bg-white,
+.dark-mode .bg-gray-50,
+.dark-mode .bg-gray-100,
+.dark-mode .bg-slate-50,
+.dark-mode .bg-slate-100 {
+    background-color: #1e1e1e;
+}
+
+.dark-mode .bg-gray-200,
+.dark-mode .bg-gray-300,
+.dark-mode .bg-slate-200,
+.dark-mode .bg-slate-300 {
+    background-color: #2a2a2a;
+}
+
+.dark-mode .text-gray-900,
+.dark-mode .text-gray-800,
+.dark-mode .text-gray-700,
+.dark-mode .text-gray-600,
+.dark-mode .text-slate-900,
+.dark-mode .text-slate-800,
+.dark-mode .text-slate-700,
+.dark-mode .text-slate-600 {
+    color: #e0e0e0;
+}
+
+.dark-mode .text-gray-500,
+.dark-mode .text-gray-400,
+.dark-mode .text-slate-500,
+.dark-mode .text-slate-400 {
+    color: #a3a3a3;
+}
+
+.dark-mode .border-gray-100,
+.dark-mode .border-gray-200,
+.dark-mode .border-gray-300,
+.dark-mode .border-slate-100,
+.dark-mode .border-slate-200,
+.dark-mode .border-slate-300,
+.dark-mode .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+.dark-mode .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+    border-color: #3d3d3d;
+}
+
+.dark-mode input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+.dark-mode select,
+.dark-mode textarea {
+    background-color: #292929;
+    color: #f5f5f5;
+    border-color: #555;
+}
+
+.dark-mode input::placeholder,
+.dark-mode textarea::placeholder {
+    color: #a3a3a3;
+}
+
+.dark-mode table,
+.dark-mode th,
+.dark-mode td {
+    color: #e0e0e0;
+    border-color: #444;
+}

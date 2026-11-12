@@ -1,4 +1,27 @@
 (() => {
+    function initializeThemeToggle() {
+        const toggle = document.getElementById('theme-toggle');
+        const isDark = document.documentElement.classList.contains('dark-mode');
+
+        document.body.classList.toggle('dark-mode', isDark);
+        if (!toggle) return;
+
+        const updateButton = (darkMode) => {
+            toggle.textContent = darkMode ? 'Light' : 'Dark';
+            toggle.setAttribute('aria-label', `Switch to ${darkMode ? 'light' : 'dark'} mode`);
+            toggle.setAttribute('aria-pressed', String(darkMode));
+        };
+
+        updateButton(isDark);
+        toggle.addEventListener('click', () => {
+            const darkMode = !document.documentElement.classList.contains('dark-mode');
+            document.documentElement.classList.toggle('dark-mode', darkMode);
+            document.body.classList.toggle('dark-mode', darkMode);
+            localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+            updateButton(darkMode);
+        });
+    }
+
     function initializeMobileMenu() {
         const toggle = document.getElementById('mobile-menu-toggle');
         const menu = document.getElementById('mobile-menu');
@@ -58,6 +81,7 @@
     }
 
     function initialize() {
+        initializeThemeToggle();
         initializeMobileMenu();
         initializePhoneInputs();
     }

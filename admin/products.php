@@ -15,6 +15,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../includes/product_images.php';
 
 require_admin_login();
 
@@ -75,14 +76,24 @@ function handle_image_upload(array $file, int $productId): ?string
     $maxBytes  = 2 * 1024 * 1024; // 2 MB
     $allowed   = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-    if ($file['size'] > $maxBytes) {
+    $temporaryPath = $file['tmp_name'] ?? null;
+    if (!is_string($temporaryPath) || !is_uploaded_file($temporaryPath)) {
+        throw new \RuntimeException('The uploaded image was invalid.');
+    }
+
+    $fileSize = filesize($temporaryPath);
+    if ($fileSize === false || $fileSize > $maxBytes) {
         throw new \RuntimeException('Image must be 2 MB or smaller.');
     }
 
     // Validate MIME type from file content, not the browser header
     $finfo = new \finfo(FILEINFO_MIME_TYPE);
-    $mime  = $finfo->file($file['tmp_name']);
-    if (!in_array($mime, $allowed, true)) {
+    $mime = $finfo->file($temporaryPath);
+    $imageInfo = getimagesize($temporaryPath);
+    if (!is_string($mime)
+        || !in_array($mime, $allowed, true)
+        || $imageInfo === false
+        || ($imageInfo['mime'] ?? '') !== $mime) {
         throw new \RuntimeException('Only JPEG, PNG, WebP, or GIF images are accepted.');
     }
 
@@ -93,19 +104,49 @@ function handle_image_upload(array $file, int $productId): ?string
         'image/gif'  => 'gif',
     };
 
-    $dir = __DIR__ . '/../assets/img/products/';
+    $dir = __DIR__ . '/../uploads/products/';
     if (!is_dir($dir)) {
-        mkdir($dir, 0755, true);
+        if (!mkdir($dir, 0755, true) && !is_dir($dir)) {
+            throw new \RuntimeException('Failed to create the product image directory.');
+        }
     }
 
-    $filename = 'product-' . $productId . '-' . time() . '.' . $ext;
+    $filename = 'product-' . $productId . '-' . bin2hex(random_bytes(8)) . '.' . $ext;
     $dest     = $dir . $filename;
 
-    if (!move_uploaded_file($file['tmp_name'], $dest)) {
+    if (!move_uploaded_file($temporaryPath, $dest)) {
         throw new \RuntimeException('Failed to save uploaded image.');
     }
 
-    return '/assets/img/products/' . $filename;
+    return '/uploads/products/' . $filename;
+}
+
+function admin_product_image_url(?string $imageUrl, string $base): string
+{
+    if ($imageUrl === null || $imageUrl === '') {
+        return '';
+    }
+
+    $resolved = product_image_src($imageUrl);
+    return filter_var($resolved, FILTER_VALIDATE_URL)
+        ? $resolved
+        : rtrim($base, '/') . '/' . ltrim($resolved, '/');
+}
+
+function remove_uploaded_product_image(?string $imagePath): void
+{
+    if ($imagePath === null) {
+        return;
+    }
+
+    $savedImage = __DIR__ . '/../' . str_replace(
+        '/',
+        DIRECTORY_SEPARATOR,
+        ltrim($imagePath, '/')
+    );
+    if (is_file($savedImage) && !unlink($savedImage)) {
+        error_log('Unable to remove a rolled-back product image: ' . $savedImage);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -127,6 +168,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $categoryId = is_int($validatedCategoryId) && $validatedCategoryId > 0
             ? $validatedCategoryId
             : null;
+        $customCategoryInput = $_POST['custom_new_category'] ?? '';
+        $customCategoryName = is_string($customCategoryInput)
+            ? trim($customCategoryInput)
+            : '';
         $name        = trim($_POST['name']        ?? '');
         $description = trim($_POST['description'] ?? '');
         $sku         = trim($_POST['sku']          ?? '');
@@ -135,6 +180,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stockQty    = (int)   ($_POST['stock_qty']   ?? 0);
         $threshold   = (int)   ($_POST['low_stock_threshold'] ?? 5);
         $isActive    = isset($_POST['is_active']) ? 1 : 0;
+        $imageUrlInput = trim(is_string($_POST['image_url'] ?? null) ? $_POST['image_url'] : '');
+        $existingImageUrl = null;
+        $imagePath = null;
+
+        if ($id > 0) {
+            $existingImageStatement = $pdo->prepare(
+                'SELECT image_url FROM products WHERE id = ? LIMIT 1'
+            );
+            $existingImageStatement->execute([$id]);
+            $existingImageUrl = $existingImageStatement->fetchColumn();
+            if ($existingImageUrl === false) {
+                $errors['product'] = 'Product not found.';
+            } else {
+                $existingImageUrl = is_string($existingImageUrl) ? $existingImageUrl : null;
+            }
+        }
+
+        $existingExternalImageUrl = '';
+        if ($existingImageUrl !== null && filter_var($existingImageUrl, FILTER_VALIDATE_URL)) {
+            $existingScheme = strtolower((string) parse_url($existingImageUrl, PHP_URL_SCHEME));
+            if (in_array($existingScheme, ['http', 'https'], true)) {
+                $existingExternalImageUrl = $existingImageUrl;
+            }
+        }
+        $imagePath = $existingImageUrl;
+        if ($imageUrlInput !== $existingExternalImageUrl) {
+            if ($imageUrlInput !== ''
+                && (mb_strlen($imageUrlInput) > 300
+                    || !filter_var($imageUrlInput, FILTER_VALIDATE_URL)
+                    || !in_array(
+                        strtolower((string) parse_url($imageUrlInput, PHP_URL_SCHEME)),
+                        ['http', 'https'],
+                        true
+                    ))) {
+                $errors['image_url'] = 'Enter a valid HTTP or HTTPS image URL (300 characters or fewer).';
+            } else {
+                $imagePath = $imageUrlInput !== '' ? $imageUrlInput : null;
+            }
+        }
 
         // Validate
         if ($name === '')         $errors['name']  = 'Product name is required.';
@@ -142,7 +226,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($price <= 0)          $errors['price'] = 'Price must be greater than zero.';
         if ($stockQty < 0)        $errors['stock_qty'] = 'Stock cannot be negative.';
         if ($threshold < 0)       $threshold = 0;
-        if ($categoryId === null) {
+        if ($customCategoryName !== '') {
+            if (mb_strlen($customCategoryName) > 100) {
+                $errors['category_id'] = 'Category name must be 100 characters or fewer.';
+            } else {
+                $categoryId = null;
+            }
+        } elseif ($categoryId === null) {
             $errors['category_id'] = 'Please select a valid category.';
         } else {
             $categoryCheck = $pdo->prepare('SELECT id FROM categories WHERE id = ? LIMIT 1');
@@ -163,15 +253,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
             $slug = make_slug($name, $id, $pdo);
+            $uploadedImagePath = null;
 
             try {
+                $pdo->beginTransaction();
+                if ($customCategoryName !== '') {
+                    $categoryLookup = $pdo->prepare(
+                        'SELECT id FROM categories WHERE name = ? LIMIT 1'
+                    );
+                    $categoryLookup->execute([$customCategoryName]);
+                    $categoryId = $categoryLookup->fetchColumn();
+
+                    if ($categoryId === false) {
+                        $slugBase = strtolower(trim(
+                            (string) preg_replace('/[^a-z0-9]+/i', '-', $customCategoryName),
+                            '-'
+                        ));
+                        if ($slugBase === '') {
+                            $slugBase = 'category';
+                        }
+
+                        $categorySlug = $slugBase;
+                        $slugSuffix = 2;
+                        $slugCheck = $pdo->prepare(
+                            'SELECT id FROM categories WHERE slug = ? LIMIT 1'
+                        );
+                        $insertCategory = $pdo->prepare(
+                            'INSERT IGNORE INTO categories (name, slug) VALUES (?, ?)'
+                        );
+
+                        while ($categoryId === false) {
+                            $slugCheck->execute([$categorySlug]);
+                            if ($slugCheck->fetchColumn() !== false) {
+                                $categorySlug = $slugBase . '-' . $slugSuffix++;
+                                continue;
+                            }
+
+                            $insertCategory->execute([$customCategoryName, $categorySlug]);
+                            $categoryLookup->execute([$customCategoryName]);
+                            $categoryId = $categoryLookup->fetchColumn();
+                            if ($categoryId === false) {
+                                $categorySlug = $slugBase . '-' . $slugSuffix++;
+                            }
+                        }
+                    }
+
+                    $categoryId = (int) $categoryId;
+                }
+
                 if ($id === 0) {
                     $stmt = $pdo->prepare(
                         'INSERT INTO products
                             (category_id, name, slug, description, sku,
-                             price, cost_price, stock_qty, low_stock_threshold, is_active)
+                             price, cost_price, stock_qty, low_stock_threshold, is_active, image_url)
                          VALUES (:category_id, :name, :slug, :description, :sku,
-                                 :price, :cost_price, :stock_qty, :low_stock_threshold, :is_active)'
+                                 :price, :cost_price, :stock_qty, :low_stock_threshold, :is_active, :image_url)'
                     );
                     $stmt->execute([
                         ':category_id' => $categoryId,
@@ -184,6 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'stock_qty' => $stockQty,
                         'low_stock_threshold' => $threshold,
                         'is_active' => $isActive,
+                        'image_url' => $imagePath,
                     ]);
                     $id = (int) $pdo->lastInsertId();
                 } else {
@@ -191,31 +328,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'UPDATE products
                          SET category_id = ?, name = ?, slug = ?, description = ?,
                              sku = ?, price = ?, cost_price = ?,
-                             stock_qty = ?, low_stock_threshold = ?, is_active = ?
+                             stock_qty = ?, low_stock_threshold = ?, is_active = ?, image_url = ?
                          WHERE id = ?'
                     );
                     $stmt->execute([
                         $categoryId, $name, $slug, $description ?: null,
                         $sku ?: null, $price, $costPrice,
-                        $stockQty, $threshold, $isActive, $id,
+                        $stockQty, $threshold, $isActive, $imagePath, $id,
                     ]);
                 }
-            } catch (PDOException $exception) {
-                die('DB Error: ' . $exception->getMessage());
-            }
 
-            // Image upload (runs after insert so we have the product ID)
-            if (empty($errors) && !empty($_FILES['image']['name'])) {
-                try {
-                    $imagePath = handle_image_upload($_FILES['image'], $id);
-                    if ($imagePath !== null) {
+                $uploadedImage = $_FILES['image_file'] ?? null;
+                if ($uploadedImage !== null && !is_array($uploadedImage)) {
+                    throw new \RuntimeException('The uploaded image was invalid.');
+                }
+                if (
+                    is_array($uploadedImage)
+                    && ($uploadedImage['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE
+                ) {
+                    $uploadedImagePath = handle_image_upload($uploadedImage, $id);
+                    if ($uploadedImagePath !== null) {
                         $pdo->prepare(
                             'UPDATE products SET image_url = ? WHERE id = ?'
-                        )->execute([$imagePath, $id]);
+                        )->execute([$uploadedImagePath, $id]);
                     }
-                } catch (\RuntimeException $e) {
-                    $errors['image'] = $e->getMessage();
                 }
+
+                $pdo->commit();
+            } catch (\RuntimeException $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                remove_uploaded_product_image($uploadedImagePath);
+                $errors['image'] = $exception->getMessage();
+            } catch (PDOException $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                remove_uploaded_product_image($uploadedImagePath);
+                die('DB Error: ' . $exception->getMessage());
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                remove_uploaded_product_image($uploadedImagePath);
+                throw $exception;
             }
 
             if (empty($errors)) {
@@ -361,6 +518,15 @@ function render_product_form(
     $v = function(string $key, mixed $default = '') use ($p): mixed {
         return $p[$key] ?? $default;
     };
+    $postedCategoryInput = $_POST['category_id'] ?? null;
+    $validatedPostedCategoryId = is_string($postedCategoryInput) || is_int($postedCategoryInput)
+        ? filter_var($postedCategoryInput, FILTER_VALIDATE_INT)
+        : false;
+    $selectedCategoryId = is_int($validatedPostedCategoryId)
+        ? $validatedPostedCategoryId
+        : (int) $v('category_id', 0);
+    $customCategoryInput = $_POST['custom_new_category'] ?? '';
+    $customCategoryValue = is_string($customCategoryInput) ? trim($customCategoryInput) : '';
     ?>
     <form method="POST"
           action="<?= $base ?>/admin/products.php"
@@ -443,17 +609,36 @@ function render_product_form(
                         <?php endif; ?>
                     </div>
                     <div class="form-group mb-0">
-                        <label for="category_id" class="form-label">Category</label>
-                        <select id="category_id" name="category_id" class="form-select"
-                                required>
+                        <div class="flex items-center justify-between mb-1">
+                            <label for="category_id" class="form-label mb-0">Category</label>
+                            <button type="button" id="toggle-new-category"
+                                    class="text-sm font-semibold text-orange"
+                                    aria-controls="new-category-box"
+                                    aria-expanded="<?= $customCategoryValue !== '' ? 'true' : 'false' ?>">
+                                + Create New Category
+                            </button>
+                        </div>
+                        <select id="category_id" name="category_id" class="form-select">
                             <option value="">-- Select a category --</option>
                             <?php foreach ($cats as $cat): ?>
                             <option value="<?= htmlspecialchars((string) $cat['id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
-                                <?= (int)$v('category_id', 0) === (int)$cat['id'] ? 'selected' : '' ?>>
+                                <?= $selectedCategoryId === (int)$cat['id'] ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($cat['name']) ?>
                             </option>
                             <?php endforeach; ?>
                         </select>
+                        <div id="new-category-box" class="mt-2 p-3"
+                             style="background: #E5E8EC; border-left: 3px solid #D9531E; border-radius: 4px;"
+                             <?= $customCategoryValue === '' ? 'hidden' : '' ?>>
+                            <label for="custom_new_category" class="form-label">
+                                Or enter a new category name
+                            </label>
+                            <input type="text" id="custom_new_category"
+                                   name="custom_new_category" class="form-input"
+                                   maxlength="100"
+                                   value="<?= htmlspecialchars($customCategoryValue, ENT_QUOTES, 'UTF-8') ?>"
+                                   placeholder="e.g. Electricals, Paints, Safety Gear">
+                        </div>
                         <?php if (isset($errors['category_id'])): ?>
                         <p class="form-error-msg" role="alert">
                             <?= htmlspecialchars($errors['category_id']) ?>
@@ -505,12 +690,13 @@ function render_product_form(
 
                     <!-- Current image preview -->
                     <?php $img = $v('image_url', ''); ?>
+                    <?php $previewImageUrl = admin_product_image_url((string) $img, $base); ?>
                     <div id="image-preview"
                          class="w-full aspect-square rounded-lg bg-gray-100
                                 overflow-hidden mb-3 flex items-center
                                 justify-center border border-gray-200">
-                        <?php if ($img): ?>
-                        <img src="<?= htmlspecialchars($base . $img) ?>"
+                        <?php if ($previewImageUrl !== ''): ?>
+                        <img src="<?= htmlspecialchars($previewImageUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
                              alt="Current product image"
                              class="w-full h-full object-cover"
                              id="img-thumb" />
@@ -532,11 +718,11 @@ function render_product_form(
                         <?php endif; ?>
                     </div>
 
-                    <label for="image" class="btn btn-ghost btn-sm btn-block
+                    <label for="image_file" class="btn btn-ghost btn-sm btn-block
                                               cursor-pointer text-center">
                         <?= $img ? '↑ Replace Image' : '↑ Upload Image' ?>
                     </label>
-                    <input type="file" id="image" name="image"
+                    <input type="file" id="image_file" name="image_file"
                            accept="image/jpeg,image/png,image/webp,image/gif"
                            class="sr-only"
                            aria-describedby="image-hint" />
@@ -548,6 +734,24 @@ function render_product_form(
                         <?= htmlspecialchars($errors['image']) ?>
                     </p>
                     <?php endif; ?>
+                    <div class="form-group mt-4">
+                        <label for="image_url" class="form-label">Image URL</label>
+                        <input type="url" id="image_url" name="image_url"
+                               class="form-input <?= isset($errors['image_url']) ? 'is-error' : '' ?>"
+                               value="<?= htmlspecialchars(
+                                   filter_var((string) $img, FILTER_VALIDATE_URL) ? (string) $img : '',
+                                   ENT_QUOTES | ENT_SUBSTITUTE,
+                                   'UTF-8'
+                               ) ?>"
+                               maxlength="300"
+                               placeholder="https://example.com/product.jpg" />
+                        <p class="form-hint">A new upload takes precedence over this URL.</p>
+                        <?php if (isset($errors['image_url'])): ?>
+                        <p class="form-error-msg" role="alert">
+                            <?= htmlspecialchars($errors['image_url']) ?>
+                        </p>
+                        <?php endif; ?>
+                    </div>
                 </div>
 
                 <!-- Status toggle -->
@@ -626,9 +830,13 @@ function render_product_form(
         $navLinks = [
             ['Dashboard', 'index.php',           'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'],
             ['Products',  'products.php',        'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10'],
+            ['Categories','admin_categories.php','M4 6h16M4 12h16M4 18h16'],
+            ['Requests',  'admin_requests.php',  'M8 10h8m-8 4h5m-8 6l-3-3V5a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2H7z'],
+            ['Gallery Manager','admin_gallery.php','M4 5h16v14H4zM8 9h.01M20 15l-5-5L5 19'],
             ['Orders',    'orders.php',          'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
             ['Users',     'users.php',           'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z'],
             ['Employees', 'employees.php',       'M16 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2m16 0v-2a4 4 0 00-3-3.87M12 7a4 4 0 11-8 0 4 4 0 018 0zm6-1a4 4 0 010 8'],
+            ['Payroll',   'admin_payroll.php',    'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
             ['Deliveries','deliveries.php',      'M3 7h11v10H3zM14 10h4l3 3v4h-7zM7 20a2 2 0 100-4 2 2 0 000 4zm10 0a2 2 0 100-4 2 2 0 000 4z'],
             ['Payments',  'payments_record.php', 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z'],
         ];
@@ -689,8 +897,17 @@ function render_product_form(
         <div class="flex flex-col sm:flex-row sm:items-center
                     sm:justify-between gap-3 mb-6">
             <h1 class="text-2xl font-extrabold text-gray-900">Products</h1>
-            <a href="<?= $base ?>/admin/products.php?action=add"
-               class="btn btn-primary btn-sm">+ Add Product</a>
+            <div class="flex flex-wrap gap-2">
+                <a href="<?= $base ?>/admin/admin_add_product.php"
+                   class="btn btn-primary btn-sm"
+                   style="background-color: #D9531E; border-color: #D9531E;">
+                    + Add New Product
+                </a>
+                <a href="<?= $base ?>/admin/admin_categories.php"
+                   class="btn btn-secondary btn-sm">
+                    + Manage Categories
+                </a>
+            </div>
         </div>
 
         <!-- Filters -->
@@ -750,8 +967,11 @@ function render_product_form(
         <div class="bg-white rounded-2xl border border-dashed border-gray-200
                     py-20 text-center">
             <p class="text-gray-400">No products match your filters.</p>
-            <a href="<?= $base ?>/admin/products.php?action=add"
-               class="btn btn-primary btn-sm mt-4">Add First Product</a>
+            <a href="<?= $base ?>/admin/admin_add_product.php"
+               class="btn btn-primary btn-sm mt-4"
+               style="background-color: #D9531E; border-color: #D9531E;">
+                Add First Product
+            </a>
         </div>
 
         <?php else: ?>
@@ -785,7 +1005,11 @@ function render_product_form(
                             <div class="w-10 h-10 rounded-lg bg-gray-100
                                         overflow-hidden flex-shrink-0">
                                 <?php if ($p['image_url']): ?>
-                                    <img src="<?= htmlspecialchars($base . $p['image_url']) ?>"
+                                    <img src="<?= htmlspecialchars(
+                                        admin_product_image_url((string) $p['image_url'], $base),
+                                        ENT_QUOTES | ENT_SUBSTITUTE,
+                                        'UTF-8'
+                                    ) ?>"
                                          alt="" class="w-full h-full object-cover"
                                          loading="lazy" aria-hidden="true" />
                                 <?php else: ?>
@@ -886,8 +1110,9 @@ function render_product_form(
                         <td class="text-center">
                             <div class="flex items-center justify-center gap-2">
                                 <!-- Edit -->
-                                <a href="<?= $base ?>/admin/products.php?action=edit&edit=<?= $p['id'] ?>"
-                                   class="btn btn-ghost btn-sm py-1 px-2.5"
+                                <a href="<?= $base ?>/admin/admin_edit_product.php?id=<?= (int) $p['id'] ?>"
+                                   class="btn btn-sm btn-outline-primary py-1 px-2.5"
+                                   style="border-color: #D9531E; color: #D9531E;"
                                    aria-label="Edit <?= htmlspecialchars($p['name'], ENT_QUOTES) ?>">
                                     Edit
                                 </a>
@@ -999,7 +1224,19 @@ function render_product_form(
 <script>
 // ── Image preview ──────────────────────────────────────────────────────
 (function () {
-    var fileInput = document.getElementById('image');
+    var newCategoryToggle = document.getElementById('toggle-new-category');
+    if (newCategoryToggle) {
+        newCategoryToggle.addEventListener('click', function () {
+            var categoryBox = document.getElementById('new-category-box');
+            categoryBox.hidden = !categoryBox.hidden;
+            this.setAttribute('aria-expanded', String(!categoryBox.hidden));
+            if (!categoryBox.hidden) {
+                document.getElementById('custom_new_category').focus();
+            }
+        });
+    }
+
+    var fileInput = document.getElementById('image_file');
     if (!fileInput) return;
 
     fileInput.addEventListener('change', function () {

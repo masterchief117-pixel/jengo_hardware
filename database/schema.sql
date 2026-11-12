@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
     email         VARCHAR(180)      NOT NULL,
     phone         VARCHAR(20)       NOT NULL,                 -- Used for M-Pesa STK Push
     password_hash VARCHAR(255)      NOT NULL,
-    role          ENUM('customer', 'attendant', 'admin')
+    role          ENUM('customer', 'attendant', 'admin', 'owner')
                                     NOT NULL DEFAULT 'customer',
     is_active     TINYINT(1)        NOT NULL DEFAULT 1,       -- 0 = deactivated by admin
     created_at    TIMESTAMP         NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -30,6 +30,26 @@ CREATE TABLE IF NOT EXISTS users (
     PRIMARY KEY (id),
     UNIQUE KEY uq_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- TABLE: system_settings
+-- Stores the global maintenance-mode state controlled by the system owner.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS system_settings (
+    id           TINYINT UNSIGNED NOT NULL,
+    system_active TINYINT(1) NOT NULL DEFAULT 1,
+    updated_by   INT UNSIGNED NULL,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                               ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    CONSTRAINT chk_system_settings_singleton CHECK (id = 1),
+    CONSTRAINT fk_system_settings_updated_by
+        FOREIGN KEY (updated_by) REFERENCES users (id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO system_settings (id, system_active) VALUES (1, 1);
 
 -- =============================================================================
 -- TABLE: admin_users
@@ -60,6 +80,7 @@ CREATE TABLE IF NOT EXISTS employees (
     date_of_birth     DATE NULL,
     sex               ENUM('female', 'male', 'other', 'prefer_not_to_say') NULL,
     phone             VARCHAR(40) NULL,
+    mpesa_phone_number VARCHAR(15) NULL,
     email             VARCHAR(180) NULL,
     user_id           INT UNSIGNED NULL,
     hired_at          DATE NOT NULL,
@@ -74,6 +95,28 @@ CREATE TABLE IF NOT EXISTS employees (
     CONSTRAINT fk_employees_user
         FOREIGN KEY (user_id) REFERENCES users (id)
         ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS payroll_records (
+    id                        INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    employee_id               INT UNSIGNED NOT NULL,
+    amount_paid               DECIMAL(12, 2) NOT NULL,
+    payment_date              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status                    VARCHAR(50) NOT NULL DEFAULT 'Initiating',
+    mpesa_phone_number        VARCHAR(15) NULL,
+    conversation_id           VARCHAR(64) NULL,
+    originator_conversation_id VARCHAR(64) NULL,
+    mpesa_receipt             VARCHAR(32) NULL,
+    result_code               VARCHAR(20) NULL,
+    result_description        VARCHAR(255) NULL,
+
+    PRIMARY KEY (id),
+    KEY idx_payroll_employee_date (employee_id, payment_date),
+    KEY idx_payroll_conversation (conversation_id),
+    KEY idx_payroll_originator_conversation (originator_conversation_id),
+    CONSTRAINT fk_payroll_records_employee
+        FOREIGN KEY (employee_id) REFERENCES employees (id)
+        ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS employee_employment_events (
@@ -113,6 +156,26 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     CONSTRAINT fk_approval_requests_admin
         FOREIGN KEY (admin_id) REFERENCES admin_users (id)
         ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- TABLE: requests
+-- General attendant requests with admin feedback and attendant-side hiding.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS requests (
+    id                  INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    attendant_id        INT UNSIGNED NOT NULL,
+    request_text        TEXT NOT NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    admin_status        VARCHAR(50) NOT NULL DEFAULT 'Pending',
+    admin_reply         TEXT NULL,
+    hidden_by_attendant TINYINT(1) NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    KEY idx_requests_attendant_created (attendant_id, created_at),
+    KEY idx_requests_status_created (admin_status, created_at),
+    CONSTRAINT fk_requests_attendant
+        FOREIGN KEY (attendant_id) REFERENCES users (id)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -187,10 +250,30 @@ CREATE TABLE IF NOT EXISTS products (
         ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- =============================================================================
+-- TABLE: product_reviews
+-- Customer reviews are linked by product_id without a foreign key so that
+-- review submission is not blocked by strict referential constraints.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS product_reviews (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    product_id    INT UNSIGNED NOT NULL,
+    customer_name VARCHAR(120) NOT NULL,
+    rating        INT NOT NULL,
+    comment       TEXT NOT NULL,
+    photo_url     VARCHAR(255) NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    KEY idx_product_reviews_product_date (product_id, created_at),
+    CONSTRAINT chk_product_reviews_rating CHECK (rating BETWEEN 1 AND 5)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- =============================================================================
 -- TABLE: orders
 -- A single transaction header — one row per purchase session.
+-- customer_id links to users; order_items links orders to purchased products.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS orders (
     id              INT UNSIGNED  NOT NULL AUTO_INCREMENT,
@@ -300,6 +383,42 @@ CREATE TABLE IF NOT EXISTS payments (
         ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- =============================================================================
+-- TABLE: gallery
+-- Public storefront photos managed by admins.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS gallery (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    title       VARCHAR(255) NULL,
+    image_url   VARCHAR(255) NOT NULL,
+    uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    KEY idx_gallery_uploaded_at (uploaded_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS gallery_folders (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    folder_name VARCHAR(100) NOT NULL,
+    cover_image VARCHAR(255) NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_gallery_folders_created (created_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS gallery_photos (
+    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    folder_id   INT UNSIGNED NOT NULL,
+    title       VARCHAR(255) NULL,
+    image_url   VARCHAR(255) NOT NULL,
+    uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_gallery_photos_folder_date (folder_id, uploaded_at, id),
+    CONSTRAINT fk_gallery_photos_folder
+        FOREIGN KEY (folder_id) REFERENCES gallery_folders (id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- =============================================================================
 -- TABLE: sales
@@ -329,6 +448,7 @@ CREATE TABLE IF NOT EXISTS sales (
     total_amount     DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
     payment_method   ENUM('cash', 'mpesa', 'card') NOT NULL DEFAULT 'cash',
     status           VARCHAR(20)    NOT NULL DEFAULT 'completed',
+    cancelled_reason VARCHAR(255)       NULL,
     notes            TEXT               NULL,
     created_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -339,6 +459,27 @@ CREATE TABLE IF NOT EXISTS sales (
     CONSTRAINT fk_sales_attendant
         FOREIGN KEY (attendant_id) REFERENCES users (id)
         ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS pos_payments (
+    id                    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    sale_id               INT UNSIGNED NOT NULL,
+    payment_method        ENUM('mpesa') NOT NULL DEFAULT 'mpesa',
+    amount                DECIMAL(12, 2) NOT NULL,
+    phone_number          VARCHAR(20) NOT NULL,
+    status                ENUM('pending', 'success', 'failed', 'cancelled') NOT NULL DEFAULT 'pending',
+    merchant_request_id   VARCHAR(100) NULL,
+    checkout_request_id   VARCHAR(100) NULL,
+    gateway_receipt       VARCHAR(100) NULL,
+    gateway_response      TEXT NULL,
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_pos_payments_checkout (checkout_request_id),
+    KEY idx_pos_payments_sale_status (sale_id, status),
+    CONSTRAINT fk_pos_payments_sale
+        FOREIGN KEY (sale_id) REFERENCES sales (id)
+        ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS sale_items (

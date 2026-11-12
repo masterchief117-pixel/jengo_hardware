@@ -362,10 +362,10 @@ require_once __DIR__ . '/includes/header.php';
 
             <!-- Footer -->
             <div class="card-footer pt-0 px-4 pb-4">
-                <?php if (has_any_role(['admin', 'attendant', 'employee'])): ?>
+                <?php if (has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                 <button type="button" disabled
                         class="btn btn-secondary btn-sm btn-block cursor-not-allowed">
-                    Staff View
+                    <?= is_system_owner() ? 'Owner View' : 'Staff View' ?>
                 </button>
                 <?php elseif ((int)$product['stock_qty'] > 0): ?>
                 <a href="<?= $base ?>/shop.php?product=<?= (int)$product['id'] ?>"

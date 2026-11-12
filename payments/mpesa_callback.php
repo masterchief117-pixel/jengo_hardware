@@ -28,6 +28,7 @@ declare(strict_types=1);
 
 // No session needed — this is a server-to-server callback
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/pos_sales.php';
 
 // ══════════════════════════════════════════════════════════════════════════
 // FORCE JSON RESPONSE — always, even on errors
@@ -159,6 +160,7 @@ if ($checkoutRequestId === '') {
 // ══════════════════════════════════════════════════════════════════════════
 
 $pdo = db();
+ensure_pos_schema($pdo);
 
 $payStmt = $pdo->prepare(
     "SELECT p.id        AS payment_id,
@@ -177,11 +179,162 @@ $payStmt->execute([$checkoutRequestId]);
 $record = $payStmt->fetch();
 
 if (!$record) {
-    // Could be a callback for a payment we don't know about (e.g. test call)
-    mpesa_log('warn', 'No matching payment for CheckoutRequestID', [
-        'checkout_request_id' => $checkoutRequestId,
-    ]);
-    // Still acknowledge so Daraja stops retrying
+    $posPaymentStmt = $pdo->prepare(
+        'SELECT pp.id AS payment_id, pp.status AS payment_status,
+                pp.amount AS payment_amount, pp.sale_id,
+                s.status AS sale_status, s.sale_number, s.attendant_id
+         FROM pos_payments pp
+         INNER JOIN sales s ON s.id = pp.sale_id
+         WHERE pp.checkout_request_id = ?
+         LIMIT 1'
+    );
+    $posPaymentStmt->execute([$checkoutRequestId]);
+    $posRecord = $posPaymentStmt->fetch();
+    if (!$posRecord) {
+        mpesa_log('warn', 'No matching payment for CheckoutRequestID', [
+            'checkout_request_id' => $checkoutRequestId,
+        ]);
+        daraja_ack();
+    }
+
+    $metadata = $stkCallback['CallbackMetadata']['Item'] ?? [];
+    $mpesaReceipt = (string) (mpesa_meta($metadata, 'MpesaReceiptNumber') ?? '');
+    $paidAmount = (float) (mpesa_meta($metadata, 'Amount') ?? 0);
+    $pdo->beginTransaction();
+    try {
+        $lockedPayment = $pdo->prepare(
+            'SELECT pp.id, pp.status AS payment_status, pp.amount,
+                    s.id AS sale_id, s.status AS sale_status, s.sale_number
+             FROM pos_payments pp
+             INNER JOIN sales s ON s.id = pp.sale_id
+             WHERE pp.checkout_request_id = ?
+             FOR UPDATE'
+        );
+        $lockedPayment->execute([$checkoutRequestId]);
+        $posPayment = $lockedPayment->fetch();
+        if ($posPayment === false || $posPayment['payment_status'] === 'success') {
+            $pdo->commit();
+            daraja_ack();
+        }
+
+        if ($resultCode === 0) {
+            if ($mpesaReceipt === '' || $paidAmount < 1 || $paidAmount !== (float) ceil((float) $posPayment['amount'])) {
+                $pdo->prepare(
+                    'UPDATE pos_payments SET gateway_response = ? WHERE id = ?'
+                )->execute([
+                    json_encode($stkCallback, JSON_INVALID_UTF8_SUBSTITUTE),
+                    (int) $posPayment['id'],
+                ]);
+                $pdo->commit();
+                mpesa_log('error', 'POS payment callback amount or receipt mismatch', [
+                    'sale_id' => (int) $posPayment['sale_id'],
+                    'checkout_request_id' => $checkoutRequestId,
+                    'amount_received' => $paidAmount,
+                ]);
+                daraja_ack();
+            }
+
+            $pdo->prepare(
+                "UPDATE pos_payments
+                 SET status = 'success', gateway_receipt = ?, gateway_response = ?
+                 WHERE id = ?"
+            )->execute([
+                $mpesaReceipt,
+                json_encode($stkCallback, JSON_INVALID_UTF8_SUBSTITUTE),
+                (int) $posPayment['id'],
+            ]);
+
+            if ($posPayment['sale_status'] === 'pending') {
+                $pdo->prepare(
+                    "UPDATE sales SET status = 'completed', cancelled_reason = NULL
+                     WHERE id = ? AND status = 'pending'"
+                )->execute([(int) $posPayment['sale_id']]);
+            } elseif ($posPayment['sale_status'] === 'cancelled') {
+                $pdo->exec('SAVEPOINT pos_late_payment_stock');
+                $items = $pdo->prepare(
+                    'SELECT product_id, quantity FROM sale_items
+                     WHERE sale_id = ? AND product_id IS NOT NULL'
+                );
+                $items->execute([(int) $posPayment['sale_id']]);
+                $reserveStock = $pdo->prepare(
+                    'UPDATE products SET stock_qty = stock_qty - ?
+                     WHERE id = ? AND stock_qty >= ?'
+                );
+                $stockAvailable = true;
+                foreach ($items->fetchAll() as $item) {
+                    $quantity = (int) $item['quantity'];
+                    $reserveStock->execute([$quantity, (int) $item['product_id'], $quantity]);
+                    if ($reserveStock->rowCount() !== 1) {
+                        $stockAvailable = false;
+                        break;
+                    }
+                }
+
+                if ($stockAvailable) {
+                    $pdo->prepare(
+                        "UPDATE sales SET status = 'completed', cancelled_reason = NULL
+                         WHERE id = ? AND status = 'cancelled'"
+                    )->execute([(int) $posPayment['sale_id']]);
+                } else {
+                    $pdo->exec('ROLLBACK TO SAVEPOINT pos_late_payment_stock');
+                    $pdo->prepare(
+                        "UPDATE sales
+                         SET cancelled_reason = 'Late M-Pesa payment received; stock reconciliation required'
+                         WHERE id = ? AND status = 'cancelled'"
+                    )->execute([(int) $posPayment['sale_id']]);
+                    mpesa_log('error', 'Late POS M-Pesa payment received after cancellation; stock unavailable', [
+                        'sale_id' => (int) $posPayment['sale_id'],
+                        'checkout_request_id' => $checkoutRequestId,
+                        'receipt' => $mpesaReceipt,
+                    ]);
+                }
+                $pdo->exec('RELEASE SAVEPOINT pos_late_payment_stock');
+            }
+
+            $pdo->commit();
+            mpesa_log('info', 'POS payment SUCCESS', [
+                'sale_id' => (int) $posPayment['sale_id'],
+                'sale_number' => (string) $posPayment['sale_number'],
+                'receipt' => $mpesaReceipt,
+                'amount' => $paidAmount,
+            ]);
+        } else {
+            if ($posPayment['sale_status'] === 'pending') {
+                cancel_pos_sale_payment(
+                    $pdo,
+                    (int) $posPayment['sale_id'],
+                    (int) $posRecord['attendant_id'],
+                    $resultCode === 1032
+                        ? 'Customer Aborted'
+                        : ($resultDesc !== '' ? $resultDesc : 'M-Pesa payment failed')
+                );
+            }
+            $gatewayStatus = $resultCode === 1032 ? 'cancelled' : 'failed';
+            $pdo->prepare(
+                'UPDATE pos_payments
+                 SET status = ?, gateway_response = ?
+                 WHERE id = ?'
+            )->execute([
+                $gatewayStatus,
+                json_encode($stkCallback, JSON_INVALID_UTF8_SUBSTITUTE),
+                (int) $posPayment['id'],
+            ]);
+            $pdo->commit();
+            mpesa_log('info', 'POS payment ' . strtoupper($gatewayStatus), [
+                'sale_id' => (int) $posPayment['sale_id'],
+                'result_code' => $resultCode,
+                'result_desc' => $resultDesc,
+            ]);
+        }
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        mpesa_log('error', 'DB exception in POS callback', [
+            'checkout_request_id' => $checkoutRequestId,
+            'message' => $exception->getMessage(),
+        ]);
+    }
     daraja_ack();
 }
 

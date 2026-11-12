@@ -20,6 +20,10 @@ require_once __DIR__ . '/includes/auth.php';
 // Must be logged in to checkout
 require_login();
 
+if (is_system_owner()) {
+    redirect('/admin/owner_dashboard.php', 'Owner accounts cannot place customer orders.', 'error');
+}
+
 if (has_any_role(['admin', 'attendant', 'employee'])) {
     redirect('/shop.php', 'Staff accounts can browse products but cannot place customer orders.', 'error');
 }
@@ -674,6 +678,14 @@ require_once __DIR__ . '/includes/header.php';
             </div>
 
         </div><!-- /sticky card -->
+        <div class="alert mt-3"
+             style="background-color: var(--bg-surface); border: 1px solid var(--border-subtle); border-left: 4px solid #D9531E;">
+            <strong>Need help with your order or payment?</strong>
+            Call or WhatsApp our dispatch desk at
+            <a href="tel:+254789453215" style="color: #D9531E; font-weight: 700;">0789453215</a>
+            or <a href="https://wa.me/254789453215" target="_blank" rel="noopener noreferrer"
+                  style="color: #D9531E; font-weight: 700;">message us on WhatsApp</a>.
+        </div>
     </div><!-- /right column -->
 
 </div><!-- /flex layout -->

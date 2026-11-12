@@ -50,6 +50,14 @@ function role_badge(string $role): string
     return "<span class=\"badge {$cls} capitalize\">{$role}</span>";
 }
 
+function admin_users_is_owner(PDO $pdo, int $userId): bool
+{
+    $statement = $pdo->prepare('SELECT role FROM users WHERE id = ? LIMIT 1');
+    $statement->execute([$userId]);
+
+    return $statement->fetchColumn() === 'owner';
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // POST HANDLER
 // ══════════════════════════════════════════════════════════════════════════
@@ -60,6 +68,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── SAVE (add or edit) ────────────────────────────────────────────────
     if ($action === 'save') {
         $isNew    = $userId === 0;
+        if (!$isNew && admin_users_is_owner($pdo, $userId)) {
+            admin_users_redirect('/admin/users.php', 'The system owner account cannot be edited here.', 'error');
+        }
+
         $fullName = trim($_POST['full_name'] ?? '');
         $email    = strtolower(trim($_POST['email'] ?? ''));
         $phone    = trim($_POST['phone'] ?? '');
@@ -200,6 +212,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     elseif ($action === 'set_role') {
         $newRole = $_POST['new_role'] ?? '';
 
+        if (admin_users_is_owner($pdo, $userId)) {
+            admin_users_redirect('/admin/users.php', 'The system owner role cannot be changed here.', 'error');
+        }
         if (!in_array($newRole, ROLES, true)) {
             admin_users_redirect('/admin/users.php', 'Invalid role.', 'error');
         }
@@ -220,6 +235,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── TOGGLE ACTIVE ─────────────────────────────────────────────────────
     elseif ($action === 'toggle_active') {
+        if (admin_users_is_owner($pdo, $userId)) {
+            admin_users_redirect('/admin/users.php', 'The system owner account cannot be deactivated here.', 'error');
+        }
         if ($userId === $selfId) {
             admin_users_redirect('/admin/users.php', 'You cannot deactivate your own account.', 'error');
         }
@@ -233,6 +251,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── RESET PASSWORD ────────────────────────────────────────────────────
     elseif ($action === 'reset_password') {
+        if (admin_users_is_owner($pdo, $userId)) {
+            admin_users_redirect('/admin/users.php', 'The system owner password cannot be reset here.', 'error');
+        }
         $newPass = trim($_POST['new_password'] ?? '');
 
         if (strlen($newPass) < 8) {
@@ -268,6 +289,9 @@ if ($view === 'edit' && $editId > 0) {
     $editUser = $s->fetch();
     if (!$editUser) {
         admin_users_redirect('/admin/users.php', 'User not found.', 'error');
+    }
+    if ($editUser['role'] === 'owner') {
+        admin_users_redirect('/admin/users.php', 'The system owner account cannot be edited here.', 'error');
     }
 }
 
@@ -343,9 +367,13 @@ function admin_sidebar(string $base): void
     $links = [
         ['Dashboard', 'index.php',           'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'],
         ['Products',  'products.php',        'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10'],
+        ['Categories','admin_categories.php','M4 6h16M4 12h16M4 18h16'],
+        ['Requests',  'admin_requests.php',  'M8 10h8m-8 4h5m-8 6l-3-3V5a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2H7z'],
+        ['Gallery Manager','admin_gallery.php','M4 5h16v14H4zM8 9h.01M20 15l-5-5L5 19'],
         ['Orders',    'orders.php',          'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
         ['Users',     'users.php',           'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z'],
         ['Employees', 'employees.php',       'M16 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2m16 0v-2a4 4 0 00-3-3.87M12 7a4 4 0 11-8 0 4 4 0 018 0zm6-1a4 4 0 010 8'],
+        ['Payroll',   'admin_payroll.php',    'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
         ['Deliveries','deliveries.php',      'M3 7h11v10H3zM14 10h4l3 3v4h-7zM7 20a2 2 0 100-4 2 2 0 000 4zm10 0a2 2 0 100-4 2 2 0 000 4z'],
         ['Payments',  'payments_record.php', 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z'],
     ];

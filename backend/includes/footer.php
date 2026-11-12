@@ -235,7 +235,7 @@ $currentYear = date('Y');
                            class="text-sm text-gray-400 hover:text-yellow-400
                                   transition-colors">Shop</a>
                     </li>
-                    <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
+                    <?php if (!has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                     <li>
                         <a href="<?= $base ?>/cart.php"
                            class="text-sm text-gray-400 hover:text-yellow-400

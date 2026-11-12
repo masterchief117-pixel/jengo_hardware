@@ -487,13 +487,20 @@ const PageLoader = (() => {
 
 const CartBadge = (() => {
     function update(count) {
+        const itemCount = Math.max(0, Number.parseInt(count, 10) || 0);
         document.querySelectorAll('[data-cart-badge]').forEach((badge) => {
-            if (count > 0) {
-                badge.textContent = count > 9 ? '9+' : String(count);
+            if (itemCount > 0) {
+                badge.textContent = itemCount > 9 ? '9+' : String(itemCount);
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
             }
+        });
+        document.querySelectorAll('[data-cart-link]').forEach((link) => {
+            link.setAttribute(
+                'aria-label',
+                itemCount > 0 ? `Shopping cart, ${itemCount} items` : 'Shopping cart'
+            );
         });
     }
 
@@ -557,7 +564,31 @@ function escapeHtml(str) {
    INIT — wire everything up once the DOM is ready
    ============================================================================ */
 
+function initThemeToggle() {
+    const toggleButton = document.getElementById('theme-toggle');
+    const isDark = document.documentElement.classList.contains('dark-mode');
+
+    document.body.classList.toggle('dark-mode', isDark);
+    if (!toggleButton) return;
+
+    const updateButton = (darkMode) => {
+        toggleButton.textContent = darkMode ? 'Light' : 'Dark';
+        toggleButton.setAttribute('aria-label', `Switch to ${darkMode ? 'light' : 'dark'} mode`);
+        toggleButton.setAttribute('aria-pressed', String(darkMode));
+    };
+
+    updateButton(isDark);
+    toggleButton.addEventListener('click', () => {
+        const darkMode = !document.documentElement.classList.contains('dark-mode');
+        document.documentElement.classList.toggle('dark-mode', darkMode);
+        document.body.classList.toggle('dark-mode', darkMode);
+        localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+        updateButton(darkMode);
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    initThemeToggle();
     MobileMenu.init();
     UserDropdown.init();
     Phone.bindLiveValidation();

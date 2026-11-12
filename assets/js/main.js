@@ -487,13 +487,20 @@ const PageLoader = (() => {
 
 const CartBadge = (() => {
     function update(count) {
+        const itemCount = Math.max(0, Number.parseInt(count, 10) || 0);
         document.querySelectorAll('[data-cart-badge]').forEach((badge) => {
-            if (count > 0) {
-                badge.textContent = count > 9 ? '9+' : String(count);
+            if (itemCount > 0) {
+                badge.textContent = itemCount > 9 ? '9+' : String(itemCount);
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
             }
+        });
+        document.querySelectorAll('[data-cart-link]').forEach((link) => {
+            link.setAttribute(
+                'aria-label',
+                itemCount > 0 ? `Shopping cart, ${itemCount} items` : 'Shopping cart'
+            );
         });
     }
 
@@ -557,7 +564,73 @@ function escapeHtml(str) {
    INIT — wire everything up once the DOM is ready
    ============================================================================ */
 
+function initThemeToggle() {
+    const toggleButton = document.getElementById('theme-toggle');
+    const isDark = document.documentElement.classList.contains('dark-mode');
+
+    document.body.classList.toggle('dark-mode', isDark);
+    if (!toggleButton) return;
+
+    const updateButton = (darkMode) => {
+        toggleButton.textContent = darkMode ? 'Light' : 'Dark';
+        toggleButton.setAttribute('aria-label', `Switch to ${darkMode ? 'light' : 'dark'} mode`);
+        toggleButton.setAttribute('aria-pressed', String(darkMode));
+    };
+
+    updateButton(isDark);
+    toggleButton.addEventListener('click', () => {
+        const darkMode = !document.documentElement.classList.contains('dark-mode');
+        document.documentElement.classList.toggle('dark-mode', darkMode);
+        document.body.classList.toggle('dark-mode', darkMode);
+        localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+        updateButton(darkMode);
+    });
+}
+
+function initProductDescriptionModal() {
+    const modal = document.getElementById('productDescModal');
+    if (!modal) return;
+
+    modal.addEventListener('show.bs.modal', (event) => {
+        const button = event.relatedTarget;
+        if (!(button instanceof HTMLElement)) return;
+
+        modal.querySelector('#modalProductName').textContent =
+            button.getAttribute('data-name') || 'Product details';
+        modal.querySelector('#modalProductCategory').textContent =
+            button.getAttribute('data-category') || 'Uncategorized';
+        modal.querySelector('#modalProductPrice').textContent =
+            button.getAttribute('data-price') || '0.00';
+
+        const description = button.getAttribute('data-description');
+        modal.querySelector('#modalProductDescription').textContent =
+            description || 'No description provided.';
+
+        const stock = Number.parseInt(button.getAttribute('data-stock') || '0', 10);
+        const stockAvailable = Number.isFinite(stock) && stock > 0;
+        const stockElement = modal.querySelector('#modalProductStock');
+        stockElement.textContent = stockAvailable
+            ? `In Stock (${stock} units)`
+            : 'Out of Stock';
+        stockElement.classList.toggle('is-in-stock', stockAvailable);
+        stockElement.classList.toggle('is-out-of-stock', !stockAvailable);
+
+        const image = modal.querySelector('#modalProductImage');
+        const imageSource = button.getAttribute('data-image') || '';
+        image.hidden = imageSource === '';
+        if (imageSource !== '') {
+            image.src = imageSource;
+            image.alt = button.getAttribute('data-name') || 'Product image';
+        } else {
+            image.removeAttribute('src');
+            image.alt = '';
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    initThemeToggle();
+    initProductDescriptionModal();
     MobileMenu.init();
     UserDropdown.init();
     Phone.bindLiveValidation();

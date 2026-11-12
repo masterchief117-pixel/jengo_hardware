@@ -16,6 +16,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/product_images.php';
 
+if (is_system_owner()) {
+    redirect('/admin/owner_dashboard.php', 'Owner accounts cannot use the shopping cart.', 'error');
+}
+
 if (has_any_role(['admin', 'attendant', 'employee'])) {
     redirect('/shop.php', 'Staff accounts can browse products but cannot use the customer cart.', 'error');
 }

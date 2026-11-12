@@ -166,9 +166,13 @@ require_once __DIR__ . '/../includes/header.php';
                 ['Admin Overview', 'index.php'],
                 ['Owner Analytics', 'dashboard.php'],
                 ['Products', 'products.php'],
+                ['Categories', 'admin_categories.php'],
+                ['Requests', 'admin_requests.php'],
+                ['Gallery Manager', 'admin_gallery.php'],
                 ['Orders', 'orders.php'],
                 ['Users', 'users.php'],
                 ['Employees', 'employees.php'],
+                ['Payroll', 'admin_payroll.php'],
                 ['Deliveries', 'deliveries.php'],
                 ['Payments', 'payments_record.php'],
             ];

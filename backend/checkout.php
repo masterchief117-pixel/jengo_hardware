@@ -20,6 +20,10 @@ require_once __DIR__ . '/includes/auth.php';
 // Must be logged in to checkout
 require_login();
 
+if (is_system_owner()) {
+    redirect('/admin/owner_dashboard.php', 'Owner accounts cannot place customer orders.', 'error');
+}
+
 if (has_any_role(['admin', 'attendant', 'employee'])) {
     redirect('/shop.php', 'Staff accounts can browse products but cannot place customer orders.', 'error');
 }

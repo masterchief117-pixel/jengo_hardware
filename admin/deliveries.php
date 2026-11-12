@@ -166,6 +166,7 @@ require_once __DIR__ . '/../includes/header.php';
             <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/index.php">Admin dashboard</a>
             <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/dashboard.php">Owner analytics</a>
             <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/employees.php">Employees</a>
+            <a class="btn btn-secondary" href="<?= $escape($base) ?>/admin/admin_payroll.php">Payroll</a>
             <a class="btn <?= $view === 'list' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= $escape($base) ?>/admin/deliveries.php">Pending (<?= (int) ($counts['pending_count'] ?? 0) ?>)</a>
             <a class="btn <?= $view === 'records' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= $escape($base) ?>/admin/deliveries.php?view=records">Records (<?= (int) ($counts['delivered_count'] ?? 0) ?>)</a>
         </div>

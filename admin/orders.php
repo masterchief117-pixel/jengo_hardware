@@ -13,10 +13,22 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../includes/product_images.php';
 
 require_admin_login();
 
 $pdo = db();
+
+function admin_orders_redirect(string $path, string $message = '', string $type = 'info'): never
+{
+    if ($message !== '') {
+        $_SESSION['flash_message'] = $message;
+        $_SESSION['flash_type'] = $type;
+    }
+
+    header('Location: ' . rtrim((string) env('APP_URL', ''), '/') . $path);
+    exit;
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // VALID STATUS TRANSITIONS
@@ -65,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $orderId = (int) ($_POST['order_id'] ?? 0);
 
     if ($orderId < 1) {
-        redirect('/admin/orders.php', 'Invalid order.', 'error');
+        admin_orders_redirect('/admin/orders.php', 'Invalid order.', 'error');
     }
 
     // ── Update status ─────────────────────────────────────────────────────
@@ -73,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newStatus = $_POST['new_status'] ?? '';
 
         if (!array_key_exists($newStatus, ORDER_STATUSES)) {
-            redirect('/admin/orders.php', 'Invalid status.', 'error');
+            admin_orders_redirect('/admin/orders.php', 'Invalid status.', 'error');
         }
 
         $pdo->prepare(
@@ -81,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         )->execute([$newStatus, $orderId]);
 
         $label = ORDER_STATUSES[$newStatus];
-        redirect(
+        admin_orders_redirect(
             "/admin/orders.php?view=detail&id={$orderId}",
             "Order status updated to \"{$label}\".",
             'success'
@@ -93,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $note = trim($_POST['admin_note'] ?? '');
 
         if ($note === '') {
-            redirect("/admin/orders.php?view=detail&id={$orderId}", 'Note cannot be empty.', 'warning');
+            admin_orders_redirect("/admin/orders.php?view=detail&id={$orderId}", 'Note cannot be empty.', 'warning');
         }
 
         // Append to existing notes
@@ -110,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'UPDATE orders SET notes = ? WHERE id = ?'
         )->execute([trim($appendedNote), $orderId]);
 
-        redirect(
+        admin_orders_redirect(
             "/admin/orders.php?view=detail&id={$orderId}",
             'Note added.',
             'success'
@@ -142,7 +154,7 @@ if ($view === 'detail') {
     $order = $stmt->fetch();
 
     if (!$order) {
-        redirect('/admin/orders.php', 'Order not found.', 'error');
+        admin_orders_redirect('/admin/orders.php', 'Order not found.', 'error');
     }
 
     // Line items
@@ -168,9 +180,27 @@ if ($view === 'detail') {
 
     <!-- ── ADMIN LAYOUT ──────────────────────────────────────────────── -->
     <div class="flex gap-0 -mx-4 sm:-mx-6 lg:-mx-8 min-h-screen">
-    <?php include __DIR__ . '/partials/sidebar.php'; ?>
+        <aside class="admin-sidebar hidden lg:flex flex-col w-56 xl:w-60
+                      sticky top-16 self-start h-[calc(100vh-4rem)] overflow-y-auto"
+               aria-label="Admin navigation">
+            <div class="admin-sidebar__brand">Admin Panel</div>
+            <a href="<?= $base ?>/admin/index.php" class="admin-sidebar__link">Dashboard</a>
+            <a href="<?= $base ?>/admin/products.php" class="admin-sidebar__link">Products</a>
+            <a href="<?= $base ?>/admin/admin_categories.php" class="admin-sidebar__link">Categories</a>
+            <a href="<?= $base ?>/admin/admin_requests.php" class="admin-sidebar__link">Requests</a>
+            <a href="<?= $base ?>/admin/admin_gallery.php" class="admin-sidebar__link">Gallery Manager</a>
+            <a href="<?= $base ?>/admin/orders.php" class="admin-sidebar__link active" aria-current="page">Orders</a>
+            <a href="<?= $base ?>/admin/users.php" class="admin-sidebar__link">Users</a>
+            <a href="<?= $base ?>/admin/employees.php" class="admin-sidebar__link">Employees</a>
+            <a href="<?= $base ?>/admin/admin_payroll.php" class="admin-sidebar__link">Payroll</a>
+            <a href="<?= $base ?>/admin/deliveries.php" class="admin-sidebar__link">Deliveries</a>
+            <a href="<?= $base ?>/admin/payments_record.php" class="admin-sidebar__link">Payments</a>
+            <div class="border-t border-gray-700/50 my-3 mx-3"></div>
+            <a href="<?= $base ?>/shop.php" class="admin-sidebar__link">🛒 View Shop</a>
+            <a href="<?= $base ?>/admin/logout.php" class="admin-sidebar__link">🚪 Sign Out</a>
+        </aside>
 
-    <div class="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
+        <div class="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
 
         <!-- Breadcrumb -->
         <nav class="flex items-center gap-2 text-sm text-gray-500 mb-6"
@@ -196,7 +226,7 @@ if ($view === 'detail') {
                 <p class="text-sm text-gray-500 mt-0.5">
                     Placed <?= date('d M Y \a\t H:i', strtotime($order['created_at'])) ?>
                 </p>
-            </div>
+                </div>
             <div class="flex items-center gap-3">
                 <?= order_status_badge($order['status']) ?>
                 <a href="<?= $base ?>/admin/orders.php"
@@ -234,15 +264,24 @@ if ($view === 'detail') {
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-50">
-                            <?php foreach ($lineItems as $li): ?>
+                            <?php foreach ($lineItems as $li):
+                                $imageValue = trim((string) ($li['image_url'] ?? ''));
+                                $lineItemImage = $imageValue !== ''
+                                    ? product_image_src($imageValue)
+                                    : '';
+                                if ($lineItemImage !== '' && !filter_var($lineItemImage, FILTER_VALIDATE_URL)) {
+                                    $lineItemImage = rtrim($base, '/') . '/' . ltrim($lineItemImage, '/');
+                                }
+                            ?>
                             <tr class="hover:bg-gray-50/50 transition-colors">
                                 <td class="px-5 py-3">
                                     <div class="flex items-center gap-3">
                                         <div class="w-10 h-10 rounded-lg bg-gray-100
                                                     overflow-hidden flex-shrink-0">
-                                            <?php if ($li['image_url']): ?>
-                                            <img src="<?= htmlspecialchars($base . $li['image_url']) ?>"
-                                                 alt="" class="w-full h-full object-cover"
+                                            <?php if ($lineItemImage !== ''): ?>
+                                            <img src="<?= htmlspecialchars($lineItemImage, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                                                 alt="<?= htmlspecialchars((string) ($li['product_name'] ?? 'Product image'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                                                 class="w-full h-full object-cover"
                                                  loading="lazy" aria-hidden="true" />
                                             <?php else: ?>
                                             <div class="w-full h-full flex items-center
@@ -661,9 +700,13 @@ require_once __DIR__ . '/../includes/header.php';
         $navLinks = [
             ['Dashboard', 'index.php',           'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'],
             ['Products',  'products.php',        'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10'],
+            ['Categories','admin_categories.php','M4 6h16M4 12h16M4 18h16'],
+            ['Requests',  'admin_requests.php',  'M8 10h8m-8 4h5m-8 6l-3-3V5a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2H7z'],
+            ['Gallery Manager','admin_gallery.php','M4 5h16v14H4zM8 9h.01M20 15l-5-5L5 19'],
             ['Orders',    'orders.php',          'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
             ['Users',     'users.php',           'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z'],
             ['Employees', 'employees.php',       'M16 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2m16 0v-2a4 4 0 00-3-3.87M12 7a4 4 0 11-8 0 4 4 0 018 0zm6-1a4 4 0 010 8'],
+            ['Payroll',   'admin_payroll.php',    'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
             ['Deliveries','deliveries.php',      'M3 7h11v10H3zM14 10h4l3 3v4h-7zM7 20a2 2 0 100-4 2 2 0 000 4zm10 0a2 2 0 100-4 2 2 0 000 4z'],
             ['Payments',  'payments_record.php', 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z'],
         ];

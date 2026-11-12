@@ -32,6 +32,27 @@ $approvalCsrfToken = (string) $_SESSION['attendant_approval_csrf'];
 // ══════════════════════════════════════════════════════════════════════════
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action  = $_POST['action']   ?? '';
+    if ($action === 'submit_request') {
+        $submittedToken = $_POST['csrf_token'] ?? '';
+        if (!is_string($submittedToken) || !hash_equals($approvalCsrfToken, $submittedToken)) {
+            redirect('/attendant/index.php', 'Your request form expired. Reload and try again.', 'error');
+        }
+
+        $requestTextInput = $_POST['request_text'] ?? '';
+        $requestText = is_string($requestTextInput)
+            ? trim(strip_tags($requestTextInput))
+            : '';
+        if ($requestText === '' || mb_strlen($requestText) > 5000) {
+            redirect('/attendant/index.php', 'Enter a request using no more than 5000 characters.', 'error');
+        }
+
+        $requestInsert = $pdo->prepare(
+            'INSERT INTO requests (attendant_id, request_text) VALUES (?, ?)'
+        );
+        $requestInsert->execute([$attendantId, $requestText]);
+        redirect('/attendant/index.php', 'Your request was sent to the admin team.', 'success');
+    }
+
     $orderId = (int) ($_POST['order_id'] ?? 0);
 
     if ($orderId < 1) {
@@ -119,6 +140,15 @@ $approvalStmt = $pdo->prepare(
 $approvalStmt->execute([$attendantId]);
 $approvalRequests = $approvalStmt->fetchAll();
 
+$requestStmt = $pdo->prepare(
+    'SELECT id, request_text, created_at, admin_status, admin_reply
+     FROM requests
+     WHERE attendant_id = ? AND hidden_by_attendant = 0
+     ORDER BY created_at DESC'
+);
+$requestStmt->execute([$attendantId]);
+$attendantRequests = $requestStmt->fetchAll();
+
 // ══════════════════════════════════════════════════════════════════════════
 // PAID ORDERS — main list
 // ══════════════════════════════════════════════════════════════════════════
@@ -202,6 +232,10 @@ require_once __DIR__ . '/../includes/header.php';
            class="btn btn-secondary btn-sm">Sign Out</a>
     </div>
 </div>
+<p class="mb-6 inline-flex rounded border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-700">
+    Admin / Tech Support Hotline:
+    <a class="ml-1 text-orange underline" href="tel:+254789453215">0789453215</a>
+</p>
 
 <section class="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5"
          aria-labelledby="approval-request-heading">
@@ -273,6 +307,74 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php endforeach; ?>
                 </tbody>
             </table>
+        </div>
+    <?php endif; ?>
+</section>
+
+<section class="mb-8 rounded-2xl border border-gray-200 bg-white p-5"
+         aria-labelledby="general-request-heading">
+    <div class="mb-4">
+        <h2 id="general-request-heading" class="text-lg font-bold text-gray-900">
+            Requests to Admin
+        </h2>
+        <p class="mt-1 text-sm text-gray-600">
+            Send a general request and review the admin response here.
+        </p>
+    </div>
+    <form method="post" action="<?= htmlspecialchars($base) ?>/attendant/index.php"
+          class="mb-5">
+        <input type="hidden" name="action" value="submit_request">
+        <input type="hidden" name="csrf_token"
+               value="<?= htmlspecialchars($approvalCsrfToken, ENT_QUOTES, 'UTF-8') ?>">
+        <label for="request-text" class="form-label">Your request</label>
+        <textarea id="request-text" name="request_text" class="form-input" rows="3"
+                  maxlength="5000" required
+                  placeholder="Describe what you need from the admin team"></textarea>
+        <button type="submit" class="btn btn-primary mt-3">Send Request</button>
+    </form>
+
+    <?php if ($attendantRequests === []): ?>
+        <p class="text-sm text-gray-500">No requests yet.</p>
+    <?php else: ?>
+        <div class="space-y-3">
+            <?php foreach ($attendantRequests as $request): ?>
+                <?php
+                $requestStatus = (string) $request['admin_status'];
+                $requestStatusClass = match (strtolower($requestStatus)) {
+                    'approved' => 'badge-success',
+                    'rejected' => 'badge-error',
+                    default => 'badge-warning',
+                };
+                ?>
+                <article class="rounded-lg border border-gray-200 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <span class="badge <?= $requestStatusClass ?>">
+                            <?= htmlspecialchars($requestStatus, ENT_QUOTES, 'UTF-8') ?>
+                        </span>
+                        <time class="text-xs text-gray-500">
+                            <?= htmlspecialchars((string) $request['created_at'], ENT_QUOTES, 'UTF-8') ?>
+                        </time>
+                    </div>
+                    <p class="mt-3 whitespace-pre-wrap text-sm text-gray-800"><?= htmlspecialchars((string) $request['request_text'], ENT_QUOTES, 'UTF-8') ?></p>
+                    <?php if (trim((string) ($request['admin_reply'] ?? '')) !== ''): ?>
+                        <div class="mt-3 rounded bg-gray-50 p-3">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-600">Admin reply</p>
+                            <p class="mt-1 whitespace-pre-wrap text-sm text-gray-800"><?= htmlspecialchars((string) $request['admin_reply'], ENT_QUOTES, 'UTF-8') ?></p>
+                        </div>
+                    <?php endif; ?>
+                    <?php if (strtolower($requestStatus) !== 'pending'): ?>
+                        <form action="<?= htmlspecialchars($base) ?>/api_dismiss_request.php"
+                              method="post" class="mt-3">
+                            <input type="hidden" name="csrf_token"
+                                   value="<?= htmlspecialchars($approvalCsrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                            <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
+                            <button type="submit" class="btn btn-secondary btn-sm">
+                                Clear from Dashboard
+                            </button>
+                        </form>
+                    <?php endif; ?>
+                </article>
+            <?php endforeach; ?>
         </div>
     <?php endif; ?>
 </section>

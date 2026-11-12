@@ -19,14 +19,11 @@ $pageTitle = isset($pageTitle) && $pageTitle !== ''
     ? htmlspecialchars($pageTitle) . ' — Jengo Hardware'
     : 'Jengo Hardware';
 
-// ── Cart item count (guests get 0) ────────────────────────────────────────
-$cartCount = 0;
-if (is_logged_in()) {
-    $cartCount = (int) ($_SESSION['cart_count'] ?? 0);
-} else {
-    // Guest cart stored in session array
-    $cartCount = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
-}
+// ── Cart quantity count ──────────────────────────────────────────────────
+$cart = $_SESSION['cart'] ?? [];
+$cartCount = is_array($cart)
+    ? array_sum(array_map(static fn ($quantity): int => max(0, (int) $quantity), $cart))
+    : 0;
 
 // ── Base URL helper (no trailing slash) ───────────────────────────────────
 $base = rtrim(env('APP_URL', ''), '/');
@@ -71,6 +68,12 @@ $flash = get_flash();
                     }
                 }
             }
+        }
+    </script>
+
+    <script>
+        if (localStorage.getItem('theme') === 'dark') {
+            document.documentElement.classList.add('dark-mode');
         }
     </script>
 
@@ -123,10 +126,11 @@ $flash = get_flash();
                    class="text-sm transition-colors duration-150 <?= nav_active($base . '/shop.php') ?>"
                    role="menuitem">Shop</a>
 
-                <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
+                <?php if (!has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                 <!-- Cart with badge -->
                 <a href="<?= $base ?>/cart.php"
                    class="relative text-sm transition-colors duration-150 <?= nav_active($base . '/cart.php') ?>"
+                   data-cart-link
                    role="menuitem"
                    aria-label="Shopping cart<?= $cartCount > 0 ? ", {$cartCount} items" : '' ?>">
                     <span class="flex items-center gap-1">
@@ -141,14 +145,12 @@ $flash = get_flash();
                         </svg>
                         Cart
                     </span>
-                    <?php if ($cartCount > 0): ?>
                     <span class="absolute -top-2 -right-3 bg-yellow-400 text-gray-900
-                                 text-xs font-bold rounded-full w-4 h-4 flex items-center
-                                 justify-center leading-none"
-                          aria-hidden="true">
+                                 text-xs font-bold rounded-full min-w-4 h-4 px-1 flex items-center
+                                 justify-center leading-none <?= $cartCount < 1 ? 'hidden' : '' ?>"
+                          data-cart-badge aria-hidden="true">
                         <?= $cartCount > 9 ? '9+' : $cartCount ?>
                     </span>
-                    <?php endif; ?>
                 </a>
                 <?php endif; ?>
 
@@ -158,6 +160,7 @@ $flash = get_flash();
                     <!-- Dashboard link — varies by role -->
                     <?php
                     [$dashLabel, $dashPath] = match (get_user_role()) {
+                        'owner'     => ['Owner Dashboard', $base . '/admin/owner_dashboard.php'],
                         'admin'     => ['Admin Panel',  $base . '/admin/index.php'],
                         'attendant' => ['POS Dashboard', $base . '/attendant/index.php'],
                         default     => ['My Account',   $base . '/customer/dashboard.php'],
@@ -170,15 +173,15 @@ $flash = get_flash();
                     </a>
 
                     <!-- User dropdown -->
-                    <div class="relative" x-data="{ open: false }">
+                    <div class="relative">
                         <button
-                            onclick="document.getElementById('user-menu').classList.toggle('hidden')"
                             class="flex items-center gap-2 text-sm text-gray-200
                                    hover:text-yellow-400 transition-colors duration-150
                                    focus:outline-none focus:ring-2 focus:ring-yellow-400
                                    focus:ring-offset-2 focus:ring-offset-gray-900 rounded"
                             aria-haspopup="true"
                             aria-expanded="false"
+                            aria-controls="user-menu"
                             id="user-menu-btn">
                             <!-- Avatar initials -->
                             <span class="w-7 h-7 rounded-full bg-yellow-500 text-gray-900
@@ -203,11 +206,12 @@ $flash = get_flash();
                              class="hidden absolute right-0 mt-2 w-44 bg-white rounded-lg
                                     shadow-xl ring-1 ring-black/5 py-1 z-50"
                              role="menu"
-                             aria-labelledby="user-menu-btn">
+                             aria-labelledby="user-menu-btn"
+                             style="background-color: #ffffff; color: #1f2937;">
 
                             <div class="px-4 py-2 border-b border-gray-100">
                                 <p class="text-xs text-gray-500 truncate">Signed in as</p>
-                                <p class="text-sm font-medium text-gray-800 truncate">
+                                <p class="text-sm font-medium text-gray-800 truncate" style="color: #1f2937;">
                                     <?= htmlspecialchars(get_user_name() ?? '') ?>
                                 </p>
                                 <span class="inline-block mt-0.5 text-xs bg-amber-100
@@ -216,22 +220,25 @@ $flash = get_flash();
                                 </span>
                             </div>
 
+                            <a href="<?= $base ?>/logout.php"
+                               class="block px-4 py-2 text-sm text-red-600
+                                      hover:bg-red-50 transition-colors"
+                               style="color: #dc3545 !important; display: block !important; padding: 8px 16px;"
+                               role="menuitem">Sign Out</a>
+
                             <a href="<?= $dashPath ?>"
                                class="block px-4 py-2 text-sm text-gray-700
                                       hover:bg-gray-50 hover:text-amber-700 transition-colors"
+                               style="color: #1f2937;"
                                role="menuitem">Dashboard</a>
 
                             <?php if (has_role('customer')): ?>
                             <a href="<?= $base ?>/customer/dashboard.php"
                                class="block px-4 py-2 text-sm text-gray-700
                                       hover:bg-gray-50 hover:text-amber-700 transition-colors"
+                               style="color: #1f2937;"
                                role="menuitem">My Orders</a>
                             <?php endif; ?>
-
-                            <a href="<?= $base ?>/logout.php"
-                               class="block px-4 py-2 text-sm text-red-600
-                                      hover:bg-red-50 transition-colors"
-                               role="menuitem">Sign Out</a>
                         </div>
                     </div>
 
@@ -253,12 +260,16 @@ $flash = get_flash();
                 <?php endif; ?>
             </div>
 
+            <button id="theme-toggle" class="theme-toggle" type="button"
+                    aria-label="Switch to dark mode" aria-pressed="false">Dark</button>
+
             <!-- ── Mobile: cart icon + hamburger ────────────────────── -->
             <div class="flex md:hidden items-center gap-3">
-                <?php if (!has_any_role(['admin', 'attendant', 'employee'])): ?>
+                <?php if (!has_any_role(['admin', 'attendant', 'employee', 'owner'])): ?>
                 <!-- Mobile cart -->
                 <a href="<?= $base ?>/cart.php"
                    class="relative text-gray-200 hover:text-yellow-400"
+                   data-cart-link
                    aria-label="Shopping cart<?= $cartCount > 0 ? ", {$cartCount} items" : '' ?>">
                     <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg"
                          fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -268,13 +279,12 @@ $flash = get_flash();
                                  M7 13L5.4 5M7 13l-2 9m12-9l2 9
                                  m-9-4h4" />
                     </svg>
-                    <?php if ($cartCount > 0): ?>
                     <span class="absolute -top-1.5 -right-1.5 bg-yellow-400 text-gray-900
-                                 text-xs font-bold rounded-full w-4 h-4 flex items-center
-                                 justify-center leading-none" aria-hidden="true">
+                                 text-xs font-bold rounded-full min-w-4 h-4 px-1 flex items-center
+                                 justify-center leading-none <?= $cartCount < 1 ? 'hidden' : '' ?>"
+                          data-cart-badge aria-hidden="true">
                         <?= $cartCount > 9 ? '9+' : $cartCount ?>
                     </span>
-                    <?php endif; ?>
                 </a>
                 <?php endif; ?>
 

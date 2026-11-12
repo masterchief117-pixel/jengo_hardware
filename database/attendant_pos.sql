@@ -41,6 +41,30 @@ CREATE TABLE IF NOT EXISTS sales (
 ALTER TABLE sales
     ADD COLUMN IF NOT EXISTS customer_id INT UNSIGNED NULL AFTER attendant_id;
 
+ALTER TABLE sales
+    ADD COLUMN IF NOT EXISTS cancelled_reason VARCHAR(255) NULL AFTER status;
+
+CREATE TABLE IF NOT EXISTS pos_payments (
+    id                    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    sale_id               INT UNSIGNED NOT NULL,
+    payment_method        ENUM('mpesa') NOT NULL DEFAULT 'mpesa',
+    amount                DECIMAL(12, 2) NOT NULL,
+    phone_number          VARCHAR(20) NOT NULL,
+    status                ENUM('pending', 'success', 'failed', 'cancelled') NOT NULL DEFAULT 'pending',
+    merchant_request_id   VARCHAR(100) NULL,
+    checkout_request_id   VARCHAR(100) NULL,
+    gateway_receipt       VARCHAR(100) NULL,
+    gateway_response      TEXT NULL,
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_pos_payments_checkout (checkout_request_id),
+    KEY idx_pos_payments_sale_status (sale_id, status),
+    CONSTRAINT fk_pos_payments_sale
+        FOREIGN KEY (sale_id) REFERENCES sales (id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sale_items (
     id            INT UNSIGNED   NOT NULL AUTO_INCREMENT,
     sale_id       INT UNSIGNED   NOT NULL,
