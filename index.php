@@ -408,16 +408,16 @@ require_once __DIR__ . '/includes/header.php';
                 'icon'  => 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 9m12-9l2 9m-9-4h4',
                 'title' => 'Add to Cart',
                 'desc'  => 'Select your items and quantities. Review your cart before proceeding to checkout.',
-                'color' => 'text-orange bg-orange-subtle',
+                'color' => 'text-blue bg-blue-subtle',
             ],
             [
                 'step'  => '03',
                 'icon'  => 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z',
-                'title' => 'Pay Securely',
+                'title' => 'Pay with confidence',
                 'desc'  => 'Pay instantly with M-Pesa STK Push or Paystack. Your payment is fully encrypted and secure.',
                 'color' => 'text-green-600 bg-green-50',
-            ],
             [
+            ],
                 'step'  => '04',
                 'icon'  => 'M5 13l4 4L19 7',
                 'title' => 'Get Your Order',
@@ -478,7 +478,7 @@ require_once __DIR__ . '/includes/header.php';
      6. PROMO / CTA BANNER
 ══════════════════════════════════════════════════════════════════════ -->
 <section class="rounded-2xl overflow-hidden mb-4"
-         style="background: linear-gradient(120deg, #1C1C1C 0%, #3d1a05 50%, #E8500A 100%);"
+         style="background: linear-gradient(120deg, #0f3f5a 0%, #3d1a05 50%, #E8500A 100%);"
          aria-label="Call to action">
     <div class="px-8 py-12 sm:py-14 text-center">
         <h2 class="text-white text-3xl sm:text-4xl font-extrabold mb-3">

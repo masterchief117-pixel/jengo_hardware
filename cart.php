@@ -169,7 +169,7 @@ require_once __DIR__ . '/includes/header.php';
 <nav class="flex items-center gap-2 text-sm text-gray-500 mb-6"
      aria-label="Breadcrumb">
     <a href="<?= $base ?>/index.php"
-       class="hover:text-orange transition-colors">Home</a>
+       class="hover:text-brown transition-colors">Home</a>
     <span aria-hidden="true">/</span>
     <a href="<?= $base ?>/shop.php"
        class="hover:text-orange transition-colors">Shop</a>
